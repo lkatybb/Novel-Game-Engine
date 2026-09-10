@@ -37,11 +37,11 @@ try:
     from api.main import app
     check("FastAPI app 导入", app is not None)
 
-    try:
-        from agents import graph
-        check("graph.py 已删除", False, "graph.py 应该不存在")
-    except ImportError:
-        check("graph.py 已删除", True)
+    from agents import graph
+    check(
+        "LangGraph 编排层可用",
+        callable(graph.stream_graph) and callable(graph.run_graph),
+    )
 except Exception as e:
     check("导入链", False, str(e))
 
