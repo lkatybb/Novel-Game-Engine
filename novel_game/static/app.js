@@ -697,14 +697,11 @@ function finishTurn() {
   dom.tapHint.hidden = true;
   hideThinkingCursor();
   dom.turnPage.querySelectorAll('.cursor').forEach((c) => c.remove());
-  // 双保险：后端异常轮可能下发空选项，补「继续」避免无按钮无提示的死局
+  // 空选项轮不补假「继续」按钮（那会让玩家误以为剧情在推进）；
+  // 只清空上一轮选项 + 提示，玩家可用下方自由输入继续
   const options = Array.isArray(app.pendingChoices) ? app.pendingChoices : [];
-  if (options.length) {
-    renderChoices(options);
-  } else {
-    renderChoices(['继续']);
-    toast('剧情接收不完整，可点「继续」或在下方自行输入行动');
-  }
+  renderChoices(options);
+  if (!options.length) toast('剧情接收不完整，可在下方自行输入行动');
   if (p.timer) { clearInterval(p.timer); p.timer = null; }
 }
 
