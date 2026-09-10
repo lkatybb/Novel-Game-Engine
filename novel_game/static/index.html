@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小说互动游戏引擎</title>
+  <link rel="stylesheet" href="/style.css?v=12">
+</head>
+<body data-mode="home" data-color-mode="light">
+  <!-- 背景层 -->
+  <div class="backdrop"></div>
+  <div class="grain"></div>
+  <div class="vignette"></div>
+
+  <!-- ========== 书架首页 ========== -->
+  <section class="launcher" id="launcher">
+    <div class="launcher-inner">
+      <div class="library-view">
+        <!-- 左侧：标题 + 书架 -->
+        <div class="brand">
+          <h1>小说互动游戏引擎</h1>
+          <p>上传小说，进入书中世界。选择你的角色，体验不同的故事走向。</p>
+        </div>
+
+        <input class="file-input" id="fileInput" type="file" accept=".txt,.md">
+        <div class="launcher-actions">
+          <button class="text-btn primary" id="importBtn">上传新小说</button>
+          <div class="mode-switch">
+            <button type="button" data-color-mode-choice="light">浅</button>
+            <button type="button" data-color-mode-choice="dark">深</button>
+          </div>
+        </div>
+
+        <!-- 书架视图：只显示书名（右对齐菜单式） -->
+        <div id="libraryView">
+          <div class="menu-list" id="novelMenuList"></div>
+        </div>
+
+        <!-- 小说详情视图：该书的存档记录 -->
+        <div id="detailView" hidden>
+          <button class="back-link" id="backToLibrary">← 返回书架</button>
+          <h2 class="detail-title" id="detailTitle"></h2>
+          <div class="detail-meta" id="detailMeta"></div>
+          <div class="menu-list" id="sessionMenuList"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 游戏主界面 ========== -->
+  <main class="app-shell" id="app" hidden>
+    <!-- 顶栏：位置名 + 进度条 -->
+    <header class="topbar">
+      <div class="story-mark">
+        <div class="story-kicker" id="storyKicker">当前位置</div>
+        <div class="story-title-line" id="storyTitleLine">——</div>
+      </div>
+      <div class="meter">
+        <span class="status-label" id="statusLabel">剧情进度</span>
+        <div class="meter-track"><div class="meter-fill" id="meterFill"></div></div>
+        <span class="tiny" id="meterText">0 / 0</span>
+      </div>
+    </header>
+
+    <!-- 阅读区：固定高度，内容在内部滚动，页面框架不动 -->
+    <section class="reader" id="reader">
+      <div class="stream" id="stream">
+        <div class="stream-spacer"></div>
+        <!-- 动态内容：block-echo（玩家回显）+ #turnPage（当前页：block-npc / block-scene） -->
+        <div class="turn-page" id="turnPage"></div>
+      </div>
+      <button class="jump-bottom" id="jumpBottom" hidden>↓ 回到底部</button>
+      <div class="tap-hint" id="tapHint" hidden>轻触继续<span class="tap-arrow">↓</span></div>
+    </section>
+
+    <!-- 交互区：固定不动，新内容生成时不跳动 -->
+    <section class="interact">
+      <div class="typing-indicator" id="typingIndicator" hidden>
+        <span></span><span></span><span></span>
+        <em>推演剧情中…</em>
+      </div>
+      <div class="choices" id="choices"></div>
+      <form class="free-input" id="freeForm">
+        <input id="freeInput" placeholder="或者，输入你想做的事…" autocomplete="off">
+        <button type="submit" title="发送">→</button>
+      </form>
+    </section>
+
+    <!-- 底栏 -->
+    <footer class="bottombar">
+      <div class="bar-actions">
+        <button class="icon-btn" id="backBtn" title="返回上一个选择">↶</button>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <button class="icon-btn" id="menuBtn" title="菜单">☰</button>
+    </footer>
+  </main>
+
+  <!-- ========== 菜单弹窗 ========== -->
+  <section class="menu-panel is-hidden" id="menuPanel">
+    <div class="modal-inner">
+      <h2>菜单</h2>
+      <p class="modal-copy" id="menuSummary">当前没有正在运行的故事。</p>
+      <div class="home-actions">
+        <button class="text-btn primary" id="resumeBtn">返回游戏</button>
+        <button class="text-btn" id="timelineBtn">剧情时间线</button>
+        <button class="text-btn" id="statusBtn">行囊见闻</button>
+        <button class="text-btn" id="graphBtn">人物关系图</button>
+        <button class="text-btn" id="homeBtn">返回书架</button>
+        <button class="text-btn" id="restartBtn">开始新游戏</button>
+        <div class="mode-switch">
+          <button type="button" data-color-mode-choice="light">浅</button>
+          <button type="button" data-color-mode-choice="dark">深</button>
+        </div>
+      </div>
+      <div class="timeline-panel" id="timelinePanel" hidden>
+        <h3>📜 剧情时间线</h3>
+        <div id="timelineList"></div>
+      </div>
+      <div class="status-panel" id="statusPanel" hidden>
+        <h3 class="status-h">行囊</h3>
+        <div class="chip-list" id="inventoryList"></div>
+        <h3 class="status-h">见闻</h3>
+        <div class="chip-list" id="flagsList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== Toast 提示 ========== -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ========== 场景切换弹窗 ========== -->
+  <div class="scene-overlay" id="sceneOverlay" hidden role="dialog" aria-modal="true" aria-label="场景切换">
+    <div class="scene-card">
+      <h2 class="scene-name" id="sceneName"></h2>
+      <p class="scene-desc" id="sceneDesc"></p>
+    </div>
+    <p class="scene-tap">轻触任意处继续</p>
+  </div>
+
+  <script src="/app.js?v=11"></script>
+</body>
+</html>

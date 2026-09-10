@@ -1,0 +1,38 @@
+# ============================================================
+# 仓库根 .gitignore  ——  e:\小说
+# 目的：让 Git 只跟踪「你自己写的项目」，把可重新获取的
+#       第三方下载物、环境、缓存、派生数据全部排除，避免
+#       SCM 面板出现上万条未跟踪文件（曾因此误删源码）。
+# ============================================================
+
+# ---------- 第三方下载的参考项目（含 LICENSE/上游 .gitignore，可从 GitHub 重新获取）----------
+/story_read/
+/graphic/
+/story_to_game/
+/story_read/*.zip
+/graphic/*.zip
+/story_to_game/*.zip
+
+# ---------- Python 环境与缓存 ----------
+/.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 前端 / Node ----------
+node_modules/
+dist/
+build/
+.vite/
+
+# ---------- 密钥（绝不入库）----------
+.env
+.env.*
+!.env.example
+
+# ---------- 派生 / 运行时数据 ----------
+novel_game/chroma_db/

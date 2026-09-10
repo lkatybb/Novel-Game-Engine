@@ -1,0 +1,71 @@
+[
+  {
+    "novel_id": "novel_20755692",
+    "filename": "novel_a53c893f.txt",
+    "title": "西游记-样本",
+    "uploaded_at": "2026-09-09T16:42:19.255054",
+    "sessions": []
+  },
+  {
+    "novel_id": "novel_a335616e",
+    "filename": "novel_cec87a63.txt",
+    "title": "test2",
+    "uploaded_at": "2026-09-09T16:54:36.896455",
+    "sessions": []
+  },
+  {
+    "novel_id": "novel_b0961a7a",
+    "filename": "novel_da2316cf.txt",
+    "title": "西游记-样本",
+    "uploaded_at": "2026-09-09T17:08:58.109066",
+    "sessions": []
+  },
+  {
+    "novel_id": "novel_6a14d1ae",
+    "filename": "novel_c6fc3364.txt",
+    "title": "悬疑",
+    "uploaded_at": "2026-09-09T21:28:51.769606",
+    "sessions": [
+      {
+        "session_id": "sess_3bd8ab2d",
+        "last_action": "（继续游戏）",
+        "updated_at": "2026-09-10T19:25:37.853545"
+      },
+      {
+        "session_id": "sess_f13b3d77",
+        "last_action": "追问下去",
+        "updated_at": "2026-09-10T19:51:02.114008"
+      },
+      {
+        "session_id": "sess_c21a80ae",
+        "last_action": "我问陆知宴，晨晨现在被关在哪里",
+        "updated_at": "2026-09-10T22:59:12.978676"
+      },
+      {
+        "session_id": "sess_da5dc830",
+        "last_action": "我问陆知宴，晨晨现在被关在哪里",
+        "updated_at": "2026-09-10T23:04:09.201465"
+      },
+      {
+        "session_id": "sess_761937ce",
+        "last_action": "（游戏开始）",
+        "updated_at": "2026-09-10T23:40:11.645534"
+      },
+      {
+        "session_id": "sess_9ead07a2",
+        "last_action": "（游戏开始）",
+        "updated_at": "2026-09-10T23:40:24.367868"
+      },
+      {
+        "session_id": "sess_aaa64553",
+        "last_action": "?????,?????????",
+        "updated_at": "2026-09-10T23:40:47.471426"
+      },
+      {
+        "session_id": "sess_0201c834",
+        "last_action": "???:????????????",
+        "updated_at": "2026-09-10T23:41:01.954631"
+      }
+    ]
+  }
+]

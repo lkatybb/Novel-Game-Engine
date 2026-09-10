@@ -1,0 +1,23 @@
+{
+  "session_id": "sess_9c0baa5c",
+  "novel_id": "novel_b0961a7a",
+  "game_state": {
+    "novel_id": "novel_b0961a7a",
+    "player_location": "花果山水帘洞",
+    "inventory": [],
+    "flags": {
+      "美猴王决定寻仙访道": true
+    },
+    "val": 50,
+    "hp": 100,
+    "current_npcs": [],
+    "triggered_events": []
+  },
+  "short_term_memory": [
+    {
+      "player": "(游戏开始)",
+      "dm": "你置身于东胜神洲傲来国花果山中。山间瀑布飞泻，群猴嬉戏。你正与猴群欢宴，却见美猴王忽生忧愁，感叹将来年老血衰，终被阎王所管。通背猿猴厉声高叫，建议大王外出寻仙访道，学个长生不老之术。众猴齐声附和，美猴王当即决定明日启程。你站在猴群中，心中一动，想要追随猴王一同前往，还是留守花果山？"
+    }
+  ],
+  "updated_at": "2026-09-09T21:18:10.091672"
+}

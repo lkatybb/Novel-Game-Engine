@@ -1,0 +1,23 @@
+{
+  "session_id": "sess_1f1edb55",
+  "novel_id": "novel_a335616e",
+  "game_state": {
+    "novel_id": "novel_a335616e",
+    "player_location": "灵台方寸山斜月三星洞外",
+    "inventory": [],
+    "flags": {
+      "开场": true
+    },
+    "val": 50,
+    "hp": 100,
+    "current_npcs": [],
+    "triggered_events": []
+  },
+  "short_term_memory": [
+    {
+      "player": "(游戏开始)",
+      "dm": "你立于灵台方寸山斜月三星洞外，清风拂面，古木参天。眼前一位童子从洞中走出，目光落在你身上，似已等候多时。你——这只自花果山远道而来的石猴，心中怀着对长生的渴望，一腔孤勇踏上寻仙之路。此刻，洞门洞开，命运的转折就在眼前。"
+    }
+  ],
+  "updated_at": "2026-09-09T16:54:43.319177"
+}

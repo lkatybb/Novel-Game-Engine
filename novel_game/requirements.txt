@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+chromadb
+sentence-transformers  # 中文Embedding模型(bge-base-zh)，自带CPU版torch
+openai
+langgraph
+jieba
+python-dotenv
+python-multipart
+pydantic>=2.0

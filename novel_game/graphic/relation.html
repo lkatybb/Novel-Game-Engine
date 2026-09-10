@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>人物关系图</title>
+    <style>
+        :root {
+            --bg-0: #f4f1ea;
+            --bg-1: #ece7dc;
+            --ink-0: #2b2823;
+            --ink-1: #6f6a5e;
+            --ink-2: #a09a8c;
+            --line: rgba(43, 40, 35, 0.14);
+            --font-song: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+            --font-sans: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        }
+        body {
+            margin: 0;
+            background: var(--bg-0);
+            color: var(--ink-0);
+            font-family: var(--font-song);
+            overflow: hidden;
+        }
+        /* 纸感背景层 */
+        .backdrop {
+            position: fixed; inset: 0; z-index: -3;
+            background:
+                radial-gradient(1200px 800px at 20% 0%, rgba(255,255,255,0.5), transparent 60%),
+                var(--bg-0);
+        }
+        .grain {
+            position: fixed; inset: 0; z-index: -2; pointer-events: none;
+            opacity: 0.35; mix-blend-mode: multiply;
+            background-image: repeating-linear-gradient(
+                0deg, transparent 0 2px, rgba(43,40,35,0.015) 2px 3px);
+        }
+        .vignette {
+            position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            box-shadow: inset 0 0 180px rgba(43, 40, 35, 0.10);
+        }
+
+        /* 顶栏 */
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px 28px;
+            border-bottom: 1px solid var(--line);
+            position: relative; z-index: 5;
+        }
+        .title { font-size: 20px; letter-spacing: 0.08em; }
+        .title .sub {
+            font-family: var(--font-sans); font-size: 11px; color: var(--ink-2);
+            letter-spacing: 0.2em; margin-left: 10px;
+        }
+        .controls { display: flex; align-items: center; gap: 10px; }
+        .controls input {
+            border: 1px solid var(--line); background: transparent;
+            color: var(--ink-0); padding: 6px 12px; border-radius: 6px;
+            font-family: var(--font-song); font-size: 13px; width: 160px;
+        }
+        .controls button {
+            border: 1px solid var(--line); background: transparent;
+            color: var(--ink-0); padding: 6px 14px; border-radius: 6px;
+            font-family: var(--font-sans); font-size: 12px; letter-spacing: 0.05em;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        .controls button:hover { border-color: var(--ink-0); }
+
+        svg { display: block; }
+
+        /* 连线：低饱和，默认关系文字隐藏 */
+        .link line {
+            stroke: #b0a890;
+            stroke-opacity: 0.35;
+            stroke-width: 1.2;
+            transition: stroke-opacity 0.2s ease, stroke-width 0.2s ease;
+        }
+        .link.highlight line { stroke-opacity: 0.85; stroke-width: 2; }
+        .link.dim line { stroke-opacity: 0.08; }
+        .link text {
+            fill: var(--ink-1);
+            font-family: var(--font-sans);
+            font-size: 11px;
+            letter-spacing: 0.05em;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            paint-order: stroke;
+            stroke: var(--bg-0);
+            stroke-width: 3px;
+            stroke-linejoin: round;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        .link.highlight text { opacity: 1; }
+
+        /* 节点：胶囊形，内嵌文字 */
+        .node .pill { cursor: pointer; transition: all 0.2s ease; }
+        .node .pill rect {
+            fill: var(--bg-1);
+            stroke: var(--ink-0);
+            stroke-width: 1;
+            opacity: 1;
+            transition: opacity 0.2s ease, stroke-width 0.2s ease;
+        }
+        .node.lead .pill rect { fill: var(--ink-0); }
+        .node.support .pill rect { fill: var(--bg-1); }
+        .node.group .pill rect { fill: #fff; }
+        .node.dim .pill rect { opacity: 0.25; }
+        .node.dim .pill text { opacity: 0.35; }
+        .node.highlight .pill rect { stroke-width: 2; }
+        .node .pill text {
+            font-family: var(--font-song);
+            font-size: 14px;
+            fill: var(--ink-0);
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+        }
+        .node.lead .pill text { fill: var(--bg-0); }
+
+        /* 图例：仅角色分类 */
+        .legend {
+            position: fixed;
+            right: 28px; bottom: 24px;
+            background: rgba(244, 241, 234, 0.92);
+            backdrop-filter: blur(6px);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 14px 18px;
+            z-index: 10;
+        }
+        .legend h4 {
+            font-family: var(--font-sans); font-size: 11px;
+            letter-spacing: 0.18em; color: var(--ink-2); margin: 0 0 10px;
+            font-weight: 400;
+        }
+        .legend-row {
+            display: flex; align-items: center; gap: 8px;
+            font-family: var(--font-sans); font-size: 12px;
+            color: var(--ink-1); margin-bottom: 5px;
+        }
+        .legend-dot {
+            width: 14px; height: 8px; border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        /* Tooltip：浅底卡片，与主站一致 */
+        .tooltip {
+            position: absolute;
+            background: var(--bg-0);
+            color: var(--ink-0);
+            padding: 10px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1000;
+            max-width: 280px;
+            box-shadow: 0 6px 18px rgba(43, 40, 35, 0.08);
+            font-family: var(--font-song);
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+        .tooltip.show { opacity: 1; }
+        .tooltip .name { font-size: 16px; letter-spacing: 0.04em; }
+        .tooltip .meta {
+            margin-top: 3px;
+            font-family: var(--font-sans); font-size: 11px;
+            color: var(--ink-2); letter-spacing: 0.1em;
+        }
+        .tooltip .rels { margin-top: 8px; }
+        .tooltip .rel-item {
+            margin-top: 3px; font-size: 12px; color: var(--ink-1);
+        }
+        .tooltip .rel-item b { color: var(--ink-0); font-weight: 600; }
+
+        /* 加载态 */
+        .empty-hint {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--ink-2); font-family: var(--font-sans); font-size: 13px;
+            letter-spacing: 0.1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="backdrop"></div>
+    <div class="grain"></div>
+    <div class="vignette"></div>
+
+    <div class="topbar">
+        <div class="title">人物关系图<span class="sub">CHARACTER MAP</span></div>
+        <div class="controls">
+            <input type="text" id="novel-id" placeholder="novel_id">
+            <button onclick="loadGraph()">加载</button>
+            <button onclick="toggleLabels()" id="btn-toggle">显示关系标签</button>
+        </div>
+    </div>
+
+    <svg id="graph"></svg>
+    <div class="legend" id="legend"></div>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="empty-hint" id="emptyHint">正在加载人物关系图…</div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        const LINK_COLORS = {
+            '亲情': '#8b4513', '师徒': '#b8860b', '敌对': '#a0522d',
+            '感情': '#9c4f6e', '盟友': '#5a7d4e', '主仆': '#6b5b73'
+        };
+        const GROUP_COLOR = { '主角': '#2b2823', '配角': '#ece7dc', '配角团': '#ffffff' };
+        let linkLabelsVisible = false;
+        let simulation = null;
+
+        function toggleLabels() {
+            linkLabelsVisible = !linkLabelsVisible;
+            d3.selectAll('.link text').style('opacity', linkLabelsVisible ? 1 : null);
+            document.getElementById('btn-toggle').textContent =
+                linkLabelsVisible ? '隐藏关系标签' : '显示关系标签';
+        }
+
+        function renderLegend() {
+            const legend = d3.select('#legend');
+            legend.html('');
+            legend.append('h4').text('角色分类');
+            legend.append('div').attr('class', 'legend-row')
+                .html(`<span class="legend-dot" style="background:#2b2823"></span>主角`);
+            legend.append('div').attr('class', 'legend-row')
+                .html(`<span class="legend-dot" style="background:#ece7dc;border:1px solid #2b2823"></span>配角`);
+            legend.append('div').attr('class', 'legend-row')
+                .html(`<span class="legend-dot" style="background:#fff;border:1px solid #2b2823"></span>配角团`);
+        }
+
+        async function loadGraph() {
+            const params = new URLSearchParams(window.location.search);
+            const novelId = document.getElementById('novel-id').value || params.get('novel_id');
+            if (!novelId) { d3.select('#emptyHint').text('请先上传小说'); return; }
+
+            const hint = d3.select('#emptyHint');
+            hint.style('display', 'flex').text('正在加载人物关系图…');
+
+            let data;
+            try {
+                const res = await fetch(`/api/novel/${novelId}/graph`);
+                data = await res.json();
+            } catch (e) {
+                hint.text('加载失败，请检查服务是否运行');
+                return;
+            }
+
+            const nodes = data.nodes || [];
+            const links = data.links || [];
+            if (!nodes.length) {
+                hint.text('暂无人物关系数据');
+                return;
+            }
+            hint.style('display', 'none');
+            renderLegend();
+
+            const svg = d3.select('#graph');
+            svg.selectAll('*').remove();
+            const width = window.innerWidth, height = window.innerHeight - 62;
+            svg.attr('width', width).attr('height', height);
+
+            simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(130))
+                .force('charge', d3.forceManyBody().strength(-420))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .velocityDecay(0.4);
+
+            const tooltip = d3.select('#tooltip');
+
+            const linkGroup = svg.selectAll('.link').data(links).enter().append('g')
+                .attr('class', 'link');
+
+            linkGroup.append('line')
+                .attr('stroke', d => LINK_COLORS[d.type] || '#b0a890');
+
+            linkGroup.append('text')
+                .text(d => d.relation || d.type || '');
+
+            const node = svg.selectAll('.node').data(nodes).enter().append('g')
+                .attr('class', d => {
+                    if (d.group === '主角') return 'node lead';
+                    if (d.group === '配角团') return 'node group';
+                    return 'node support';
+                })
+                .call(d3.drag()
+                    .on('start', (e, d) => {
+                        if (!e.active) simulation.alphaTarget(0.3).restart();
+                        d.fx = d.x; d.fy = d.y;
+                    })
+                    .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+                    .on('end', (e, d) => {
+                        if (!e.active) simulation.alphaTarget(0);
+                        // 拖拽后保持固定，不自动回弹
+                    }));
+
+            // 测量文本宽度并绘制胶囊形节点
+            const tmpText = svg.append('text').attr('font-family', 'Songti SC, serif')
+                .attr('font-size', '14px').style('visibility', 'hidden');
+            nodes.forEach(d => {
+                tmpText.text(d.id);
+                const w = tmpText.node().getComputedTextLength();
+                d.pillW = Math.max(56, Math.min(180, w + 28));
+                d.pillH = 32;
+            });
+            tmpText.remove();
+
+            const pill = node.append('g').attr('class', 'pill');
+            pill.append('rect')
+                .attr('x', d => -d.pillW / 2)
+                .attr('y', d => -d.pillH / 2)
+                .attr('width', d => d.pillW)
+                .attr('height', d => d.pillH)
+                .attr('rx', 16).attr('ry', 16);
+            pill.append('text').attr('y', 1).text(d => d.id);
+
+            // 节点 hover：高亮相连，其余淡化
+            node.on('mouseover', function(e, d) {
+                    const linked = new Set();
+                    linked.add(d.id);
+                    links.forEach(l => {
+                        const s = l.source.id || l.source, t = l.target.id || l.target;
+                        if (s === d.id) { linked.add(t); }
+                        if (t === d.id) { linked.add(s); }
+                    });
+                    node.classed('highlight', n => n.id === d.id)
+                        .classed('dim', n => !linked.has(n.id));
+                    linkGroup.classed('highlight', l => {
+                        const s = l.source.id || l.source, t = l.target.id || l.target;
+                        return s === d.id || t === d.id;
+                    }).classed('dim', l => {
+                        const s = l.source.id || l.source, t = l.target.id || l.target;
+                        return s !== d.id && t !== d.id;
+                    });
+                    d3.select(this).select('.pill rect').attr('stroke-width', 2);
+
+                    // tooltip
+                    const relatedLinks = links.filter(l => {
+                        const s = l.source.id || l.source, t = l.target.id || l.target;
+                        return s === d.id || t === d.id;
+                    });
+                    const relHtml = relatedLinks.map(l => {
+                        const s = l.source.id || l.source, t = l.target.id || l.target;
+                        const other = s === d.id ? t : s;
+                        return `<div class="rel-item">与 <b>${other}</b>：${l.relation || l.type || '未知'}</div>`;
+                    }).join('');
+                    tooltip.html(
+                        `<div class="name">${d.id}</div>` +
+                        `<div class="meta">${d.group || '—'} · 重要性 ${d.weight || '-'} 分</div>` +
+                        (relHtml ? `<div class="rels">${relHtml}</div>` : '')
+                    ).classed('show', true);
+                })
+                .on('mousemove', function(e) {
+                    const bw = tooltip.node().offsetWidth;
+                    const bh = tooltip.node().offsetHeight;
+                    let x = e.pageX + 14, y = e.pageY + 14;
+                    if (x + bw > window.innerWidth) x = e.pageX - bw - 14;
+                    if (y + bh > window.innerHeight) y = e.pageY - bh - 14;
+                    tooltip.style('left', x + 'px').style('top', y + 'px');
+                })
+                .on('mouseout', function() {
+                    node.classed('highlight', false).classed('dim', false);
+                    linkGroup.classed('highlight', false).classed('dim', false);
+                    tooltip.classed('show', false);
+                });
+
+            // 连线 hover
+            linkGroup.on('mouseover', function(e, d) {
+                    const s = d.source.id || d.source, t = d.target.id || d.target;
+                    node.classed('highlight', n => n.id === s || n.id === t)
+                        .classed('dim', n => n.id !== s && n.id !== t);
+                    linkGroup.classed('highlight', l => l === d)
+                        .classed('dim', l => l !== d);
+                    tooltip.html(
+                        `<div class="name">${s} ↔ ${t}</div>` +
+                        `<div class="rels"><div class="rel-item">${d.relation || ''} <b>（${d.type || '—'}）</b></div></div>`
+                    ).classed('show', true);
+                })
+                .on('mousemove', function(e) {
+                    const bw = tooltip.node().offsetWidth;
+                    let x = e.pageX + 14, y = e.pageY + 14;
+                    if (x + bw > window.innerWidth) x = e.pageX - bw - 14;
+                    tooltip.style('left', x + 'px').style('top', y + 'px');
+                })
+                .on('mouseout', function() {
+                    node.classed('highlight', false).classed('dim', false);
+                    linkGroup.classed('highlight', false).classed('dim', false);
+                    tooltip.classed('show', false);
+                });
+
+            simulation.on('tick', () => {
+                linkGroup.select('line')
+                    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                linkGroup.select('text')
+                    .attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2)
+                    .attr('transform', d => {
+                        const dx = d.target.x - d.source.x;
+                        const dy = d.target.y - d.source.y;
+                        let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                        if (angle > 90 || angle < -90) angle += 180;
+                        return `rotate(${angle}, ${(d.source.x + d.target.x) / 2}, ${(d.source.y + d.target.y) / 2})`;
+                    });
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        }
+
+        // 窗口缩放时重设中心
+        window.addEventListener('resize', () => {
+            if (simulation) {
+                simulation.force('center', d3.forceCenter(window.innerWidth / 2, (window.innerHeight - 62) / 2));
+                simulation.alpha(0.3).restart();
+            }
+        });
+
+        // 自动从 URL 参数加载
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const novelId = params.get('novel_id');
+            if (novelId) {
+                document.getElementById('novel-id').value = novelId;
+                loadGraph();
+            }
+        })();
+    </script>
+</body>
+</html>

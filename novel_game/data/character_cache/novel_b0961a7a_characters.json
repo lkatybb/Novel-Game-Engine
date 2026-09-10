@@ -1,0 +1,256 @@
+{
+  "graph": {
+    "nodes": [
+      {
+        "id": "孙悟空",
+        "weight": 100,
+        "group": "主角"
+      },
+      {
+        "id": "菩提祖师",
+        "weight": 60,
+        "group": "配角"
+      },
+      {
+        "id": "唐僧",
+        "weight": 80,
+        "group": "配角"
+      },
+      {
+        "id": "猪八戒",
+        "weight": 70,
+        "group": "配角"
+      },
+      {
+        "id": "沙僧",
+        "weight": 60,
+        "group": "配角"
+      },
+      {
+        "id": "白龙马",
+        "weight": 40,
+        "group": "配角"
+      },
+      {
+        "id": "美猴王",
+        "weight": 50,
+        "group": "配角"
+      }
+    ],
+    "links": [
+      {
+        "source": "孙悟空",
+        "target": "菩提祖师",
+        "relation": "师徒",
+        "type": "师徒"
+      },
+      {
+        "source": "唐僧",
+        "target": "孙悟空",
+        "relation": "师徒",
+        "type": "师徒"
+      },
+      {
+        "source": "唐僧",
+        "target": "猪八戒",
+        "relation": "师徒",
+        "type": "师徒"
+      },
+      {
+        "source": "唐僧",
+        "target": "沙僧",
+        "relation": "师徒",
+        "type": "师徒"
+      },
+      {
+        "source": "唐僧",
+        "target": "白龙马",
+        "relation": "师徒",
+        "type": "师徒"
+      }
+    ]
+  },
+  "npc_profiles": {
+    "孙悟空": {
+      "personality": "桀骜不驯，机智勇敢，重情重义，但早期急躁冲动，缺乏耐心。",
+      "secret": "由仙石所生，无父无母，天生地养。",
+      "speech_style": "自称‘俺老孙’或‘我’，语气直率，常带戏谑。",
+      "goal": "追求长生不老，后保护唐僧西天取经，修成正果。"
+    },
+    "菩提祖师": {
+      "personality": "深不可测，智慧超群，收徒严谨，洞察人心。",
+      "secret": "隐居灵台方寸山，真实身份或许与佛道两家皆有渊源。",
+      "speech_style": "庄重简练，话语含玄机。",
+      "goal": "传授道法，引导有缘人，但未完全显露自身意图。"
+    },
+    "唐僧": {
+      "personality": "慈悲为怀，意志坚定，但有时过于迂腐，肉眼凡胎易受蒙蔽。",
+      "secret": "前世为如来二弟子金蝉子，因轻慢佛法被贬。",
+      "speech_style": "文雅客气，常念阿弥陀佛，语气温和。",
+      "goal": "西天取经，普度众生。"
+    },
+    "猪八戒": {
+      "personality": "贪吃好色，懒惰爱偷懒，但关键时刻也忠诚勇敢。",
+      "secret": "原为天蓬元帅，因调戏嫦娥被贬下凡，错投猪胎。",
+      "speech_style": "口语化，带点粗俗，常自称‘俺’。",
+      "goal": "一路保护唐僧，但内心常想回高老庄过安稳日子。"
+    },
+    "沙僧": {
+      "personality": "忠厚老实，任劳任怨，稳重冷静。",
+      "secret": "原为卷帘大将，因失手打碎琉璃盏被贬下凡。",
+      "speech_style": "言语不多，多用敬语。",
+      "goal": "保护唐僧西行，洗脱自身罪过。"
+    },
+    "白龙马": {
+      "personality": "沉默寡言，忠心耿耿，耐力持久。",
+      "secret": "原为西海龙王三太子，因纵火烧了殿上明珠被贬。",
+      "speech_style": "极少说话，多以行动表达。",
+      "goal": "驮负唐僧西行，将功赎罪。"
+    },
+    "美猴王": {
+      "personality": "早期无忧无虑，胆大包天，争强好胜，有领导才能。",
+      "secret": "即孙悟空在花果山称王时期的称呼，同一角色。",
+      "speech_style": "豪气冲天，自称‘俺老孙’。",
+      "goal": "寻求长生不老之术，带领群猴安居乐业。"
+    }
+  },
+  "key_events": [
+    {
+      "event_name": "石猴出世",
+      "trigger_condition": "花果山山顶仙石孕育已久，一日迸裂产出石猴。",
+      "order": 1,
+      "key_characters": [
+        "孙悟空"
+      ]
+    },
+    {
+      "event_name": "发现水帘洞称王",
+      "trigger_condition": "群猴发现瀑布源头，石猴率先进入水帘洞并带领众猴进入，众猴遵守诺言拜其为王。",
+      "order": 2,
+      "key_characters": [
+        "孙悟空",
+        "众猴"
+      ]
+    },
+    {
+      "event_name": "出海求仙",
+      "trigger_condition": "美猴王因忧恼生死无常，听从通背猿猴建议，决定离开花果山寻访长生之术。",
+      "order": 3,
+      "key_characters": [
+        "孙悟空",
+        "通背猿猴"
+      ]
+    },
+    {
+      "event_name": "拜师菩提祖师",
+      "trigger_condition": "孙悟空在灵台方寸山斜月三星洞找到菩提祖师，恳求拜师学道。",
+      "order": 4,
+      "key_characters": [
+        "孙悟空",
+        "菩提祖师"
+      ]
+    },
+    {
+      "event_name": "获赐名孙悟空",
+      "trigger_condition": "菩提祖师见孙悟空诚意，且源自石猴，赐其姓孙，并依法名辈分为其取名悟空。",
+      "order": 5,
+      "key_characters": [
+        "菩提祖师",
+        "孙悟空"
+      ]
+    },
+    {
+      "event_name": "学得七十二变和筋斗云",
+      "trigger_condition": "孙悟空在山中修习多年，菩提祖师分别传授他长生妙法、七十二变及筋斗云。",
+      "order": 6,
+      "key_characters": [
+        "孙悟空",
+        "菩提祖师"
+      ]
+    },
+    {
+      "event_name": "回山除混世魔王",
+      "trigger_condition": "孙悟空因炫耀法术被菩提祖师逐出师门，回到花果山，得知混世魔王欺凌猴众，随即斩杀魔王。",
+      "order": 7,
+      "key_characters": [
+        "孙悟空",
+        "混世魔王"
+      ]
+    },
+    {
+      "event_name": "龙宫取金箍棒",
+      "trigger_condition": "孙悟空为使猴众有兵器，前往东海龙宫寻求兵器，最终取得定海神针金箍棒。",
+      "order": 8,
+      "key_characters": [
+        "孙悟空",
+        "东海龙王"
+      ]
+    },
+    {
+      "event_name": "大闹地府销生死簿",
+      "trigger_condition": "酒醉后魂魄被勾入地府，孙悟空大闹地府并勾销猴类生死簿。",
+      "order": 9,
+      "key_characters": [
+        "孙悟空",
+        "阎王"
+      ]
+    },
+    {
+      "event_name": "弼马温之职",
+      "trigger_condition": "龙王和阎王向天庭告发，玉帝听从太白金星建议招安孙悟空为弼马温。",
+      "order": 10,
+      "key_characters": [
+        "孙悟空",
+        "玉帝",
+        "太白金星"
+      ]
+    },
+    {
+      "event_name": "自封齐天大圣",
+      "trigger_condition": "孙悟空发现自己官小受辱，一怒之下打出南天门，回到花果山自封齐天大圣。",
+      "order": 11,
+      "key_characters": [
+        "孙悟空",
+        "天庭诸神"
+      ]
+    },
+    {
+      "event_name": "大闹天宫",
+      "trigger_condition": "玉帝派兵征讨失败后，再次招安封其为齐天大圣，但王母蟠桃会未请，孙悟空搅乱蟠桃会并大闹天宫，最终被如来佛祖降服。",
+      "order": 12,
+      "key_characters": [
+        "孙悟空",
+        "如来佛祖",
+        "玉帝"
+      ]
+    },
+    {
+      "event_name": "囚困五行山",
+      "trigger_condition": "如来佛祖与孙悟空打赌，悟空未能飞出佛掌，被压于五行山下，等待取经人。",
+      "order": 13,
+      "key_characters": [
+        "孙悟空",
+        "如来佛祖"
+      ]
+    },
+    {
+      "event_name": "五行山皈依唐僧",
+      "trigger_condition": "五百年后，观音菩萨寻访取经人，唐僧途径五行山，揭去封帖救出悟空，收其为徒。",
+      "order": 14,
+      "key_characters": [
+        "唐僧",
+        "孙悟空",
+        "观音菩萨"
+      ]
+    },
+    {
+      "event_name": "西行取经开始",
+      "trigger_condition": "唐僧与悟空师徒启程西行，故事由此进入取经之旅。",
+      "order": 15,
+      "key_characters": [
+        "唐僧",
+        "孙悟空"
+      ]
+    }
+  ]
+}

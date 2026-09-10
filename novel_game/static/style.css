@@ -1,0 +1,671 @@
+/* ==========================================================================
+   小说互动游戏引擎 - 样式表
+   设计语言：暖米色纸感 / 衬线宋体 / 沉浸式单栏（借鉴 Story-to-Game 设计系统，
+   按本项目结构重构：设计令牌 → 布局三段式 → 组件）
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. 设计令牌（浅色 / 深色两套）
+   -------------------------------------------------------------------------- */
+:root {
+  --bg-0: #f4f1ea;            /* 页面底色：暖米色 */
+  --bg-1: #ece7dc;            /* 卡片底色 */
+  --ink-0: #2b2823;           /* 主文字：墨色 */
+  --ink-1: #6f6a5e;           /* 次级文字：灰褐 */
+  --ink-2: #a09a8c;           /* 弱化文字 */
+  --line: rgba(43, 40, 35, 0.14);
+  --accent: #2b2823;          /* 主按钮：墨色块 */
+  --accent-ink: #f4f1ea;
+  --ok: #4a7c59;              /* 已触发事件 */
+  --shadow-lg: 0 24px 60px rgba(43, 40, 35, 0.12);
+  --shadow-sm: 0 6px 18px rgba(43, 40, 35, 0.08);
+  --font-song: "华文宋体", "STSong", "Songti SC", "Noto Serif CJK SC",
+               "Source Han Serif SC", "SimSun", serif;
+  --font-sans: "华文细黑", "STXihei", "PingFang SC", "Microsoft YaHei",
+               system-ui, sans-serif;
+}
+
+body[data-color-mode="dark"] {
+  --bg-0: #191713;
+  --bg-1: #211e18;
+  --ink-0: #e8e2d4;
+  --ink-1: #a89f8c;
+  --ink-2: #6e6759;
+  --line: rgba(232, 226, 212, 0.14);
+  --accent: #e8e2d4;
+  --accent-ink: #191713;
+  --ok: #7db88d;
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   2. 基础
+   -------------------------------------------------------------------------- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font-song);
+  background: var(--bg-0);
+  color: var(--ink-0);
+  overflow: hidden;
+  transition: background 0.4s ease, color 0.4s ease;
+}
+
+button { font-family: inherit; cursor: pointer; }
+
+[hidden] { display: none !important; }
+.is-hidden { display: none !important; }
+
+/* 背景装饰层：纸纹 + 暗角，营造纸感氛围 */
+.backdrop {
+  position: fixed; inset: 0; z-index: -3;
+  background:
+    radial-gradient(1200px 800px at 20% 0%, rgba(255,255,255,0.5), transparent 60%),
+    var(--bg-0);
+}
+body[data-color-mode="dark"] .backdrop {
+  background:
+    radial-gradient(1200px 800px at 20% 0%, rgba(255,255,255,0.04), transparent 60%),
+    var(--bg-0);
+}
+.grain {
+  position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  opacity: 0.35; mix-blend-mode: multiply;
+  background-image: repeating-linear-gradient(
+    0deg, transparent 0 2px, rgba(43,40,35,0.015) 2px 3px);
+}
+body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
+.vignette {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  box-shadow: inset 0 0 180px rgba(43, 40, 35, 0.10);
+}
+
+/* --------------------------------------------------------------------------
+   3. 书架首页（launcher）
+   -------------------------------------------------------------------------- */
+.launcher {
+  height: 100vh; overflow-y: auto;
+  display: flex; align-items: center; justify-content: center;
+}
+.launcher-inner { width: min(880px, 90vw); padding: 48px 0 80px; }
+
+.brand h1 {
+  font-size: clamp(40px, 6vw, 64px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.15;
+}
+.brand p {
+  margin-top: 16px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink-1);
+  letter-spacing: 0.04em;
+}
+
+.launcher-actions {
+  margin-top: 32px;
+  display: flex; align-items: center; gap: 12px;
+}
+
+.file-input { display: none; }
+
+/* 文本按钮（主操作 / 次操作） */
+.text-btn {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-0);
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  transition: all 0.2s ease;
+}
+.text-btn:hover { border-color: var(--ink-0); }
+.text-btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+.text-btn.primary:hover { opacity: 0.85; }
+.text-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 明暗切换 */
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.mode-switch button {
+  border: none; background: transparent;
+  color: var(--ink-1);
+  padding: 10px 18px; font-size: 13px;
+}
+.mode-switch button:hover { color: var(--ink-0); }
+
+/* 菜单式列表（书架 / 存档）：靠右对齐，细线分隔，→ 箭头（Story-to-Game 风格） */
+.menu-list {
+  margin-top: 56px;
+  margin-left: auto;            /* 整列靠右 */
+  width: min(560px, 100%);
+}
+.menu-item {
+  display: flex; align-items: baseline; gap: 14px;
+  width: 100%;
+  padding: 18px 4px;
+  border: none; border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-0);
+  font-family: var(--font-song);
+  font-size: 20px;
+  letter-spacing: 0.05em;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+.menu-item:hover { padding-left: 12px; }
+.menu-item .menu-label { flex: 1; }
+.menu-item .menu-sub {
+  font-family: var(--font-sans);
+  font-size: 12px; color: var(--ink-2);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.menu-item .menu-arrow {
+  color: var(--ink-2);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+.menu-item:hover .menu-arrow { color: var(--ink-0); transform: translateX(4px); }
+.menu-item-strong .menu-label { font-weight: 700; }
+
+/* 书详情页 */
+.back-link {
+  margin-top: 40px;
+  border: none; background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-sans); font-size: 13px;
+  letter-spacing: 0.1em;
+  padding: 0;
+  transition: color 0.2s ease;
+}
+.back-link:hover { color: var(--ink-0); }
+.detail-title {
+  margin-top: 20px;
+  font-size: clamp(30px, 4.4vw, 44px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.detail-meta {
+  margin-top: 10px;
+  font-family: var(--font-sans); font-size: 12px; color: var(--ink-2);
+  letter-spacing: 0.08em;
+}
+
+.empty-hint {
+  padding: 28px 0;
+  font-family: var(--font-sans); font-size: 13px; color: var(--ink-2);
+}
+
+/* --------------------------------------------------------------------------
+   4. 游戏主界面：四段式（topbar / reader / interact / bottombar）
+      reader 固定高度内部滚动，interact 固定不动 → 生成内容时页面零跳动
+   -------------------------------------------------------------------------- */
+.app-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+/* 4.1 顶栏 */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 40px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.story-kicker {
+  font-family: var(--font-sans); font-size: 11px;
+  color: var(--ink-2); letter-spacing: 0.18em;
+}
+.story-title-line {
+  margin-top: 4px; font-size: 17px; letter-spacing: 0.06em;
+}
+.meter { display: flex; align-items: center; gap: 10px; }
+.status-label {
+  font-family: var(--font-sans); font-size: 12px; color: var(--ink-1);
+}
+.meter-track {
+  width: 120px; height: 4px; border-radius: 2px;
+  background: var(--line); overflow: hidden;
+}
+.meter-fill {
+  height: 100%; width: 0%;
+  background: var(--ink-0);
+  transition: width 0.4s ease;
+}
+.tiny { font-family: var(--font-sans); font-size: 11px; color: var(--ink-2); }
+
+/* 4.2 阅读区：固定高度容器，内容内部滚动（页面框架永不跳动） */
+.reader {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;      /* 滚到边界不带动整页 */
+  scrollbar-width: thin;
+}
+.stream {
+  min-height: 100%;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 40px 24px 36px;
+  display: flex; flex-direction: column;
+}
+.stream-spacer { flex: 1 0 auto; }   /* 内容少时沉底，多时收缩为 0，滚动可达顶部 */
+
+/* 内容块：淡入上浮，避免突兀插入 */
+.block {
+  opacity: 0; transform: translateY(10px);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.block.show { opacity: 1; transform: none; }
+/* 思考光标：直接显示，不走淡入动画 */
+.block-thinking { opacity: 1; transform: none; }
+
+/* 场景块 */
+.block-scene .story-text {
+  font-size: clamp(19px, 2.2vw, 23px);
+  line-height: 2.05;                 /* 舒适行距，长文阅读减疲劳 */
+  letter-spacing: 0.04em;
+  white-space: pre-wrap;
+  text-align: left;
+}
+/* NPC 块：speaker 标签 + 台词 */
+.block-npc { margin-top: 18px; }
+.block-npc .speaker {
+  font-family: var(--font-sans);
+  font-size: 13px; font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--ink-1);
+  text-align: left;
+  margin-bottom: 10px;
+}
+.block-npc .story-text {
+  font-size: clamp(19px, 2.2vw, 23px);
+  line-height: 2.05;
+  letter-spacing: 0.04em;
+  white-space: pre-wrap;
+  text-align: left;
+}
+/* 玩家动作回显块：小字、弱化、左对齐加边线 */
+.block-echo {
+  align-self: flex-start;
+  max-width: 85%;
+  margin-top: 18px;
+  padding: 8px 16px;
+  border-left: 2px solid var(--ink-2);
+}
+.block-echo p {
+  font-family: var(--font-song);
+  font-size: 15px; line-height: 1.7;
+  color: var(--ink-1);
+  letter-spacing: 0.03em;
+  white-space: pre-wrap;
+}
+.story-text .cursor,
+.block p .cursor {
+  display: inline-block;
+  width: 2px; height: 1em;
+  background: var(--ink-1);
+  vertical-align: -0.15em;
+  margin-left: 2px;
+  animation: blink 0.9s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 回到底部悬浮按钮：仅在用户上翻查看历史时出现 */
+.jump-bottom {
+  position: absolute;
+  right: 20px; bottom: 16px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--ink-1);
+  font-family: var(--font-sans); font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 8px 16px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+  z-index: 5;
+}
+.jump-bottom:hover { color: var(--ink-0); border-color: var(--ink-1); }
+
+/* --------------------------------------------------------------------------
+   翻页阅读：流式结束后按句分页，每页 2-3 行，轻触翻下一页
+   -------------------------------------------------------------------------- */
+/* 进入本轮内容后顶部锚定：沉底 spacer 让位，内容从上向下排版 */
+.stream.paging .stream-spacer { display: none; }
+/* echo（玩家回显）只出现在第 1 页，翻页后焦点留给正文/NPC */
+.stream.paging .block-echo { display: none; }
+.stream.paging[data-page="0"] .block-echo { display: block; }
+
+/* 翻页内容块：像选项卡一样从底部渐进弹出，并带触底回弹；轻触后反向沉回淡出 */
+.stream.paging .block.page-in {
+  animation: pagePop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stream.paging .block.page-out {
+  animation: pageSink 0.28s cubic-bezier(0.5, 0, 0.75, 0) both;
+}
+@keyframes pagePop {
+  0%   { opacity: 0; transform: translateY(30px) scale(0.985); }
+  62%  { opacity: 1; transform: translateY(-5px) scale(1.004); }  /* 越过落点后回弹 */
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pageSink {
+  0%   { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(26px) scale(0.99); }
+}
+
+/* 轻触继续：底部呼吸提示，44px 以上点击区域 */
+.tap-hint {
+  position: absolute;
+  left: 50%; bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 22px;
+  font-family: var(--font-sans);
+  font-size: 11px; letter-spacing: 0.24em;
+  color: var(--ink-2);
+  cursor: pointer; user-select: none;
+  animation: tapBreathe 1.9s ease-in-out infinite;
+}
+.tap-arrow { font-size: 13px; line-height: 1; }
+@keyframes tapBreathe {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+/* --------------------------------------------------------------------------
+   场景切换弹窗：半透明遮罩 + 居中卡片，点击任意处关闭
+   -------------------------------------------------------------------------- */
+.scene-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 26px; padding: 24px;
+  background: rgba(35, 31, 25, 0.45);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+body[data-color-mode="dark"] .scene-overlay { background: rgba(0, 0, 0, 0.55); }
+.scene-overlay.show { opacity: 1; }
+.scene-card {
+  text-align: center;
+  max-width: 620px;
+  opacity: 0;
+  transform: translateY(16px) scale(0.97);
+  transition: opacity 0.34s ease, transform 0.34s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.scene-overlay.show .scene-card {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.05s;
+}
+.scene-name {
+  font-family: var(--font-song);
+  font-size: clamp(30px, 4.6vw, 46px);
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;            /* 字距导致的视觉偏移补偿 */
+  color: #f6f2e8;
+  margin: 0 0 16px;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+}
+.scene-desc {
+  font-family: var(--font-song);
+  font-size: clamp(15px, 1.8vw, 18px);
+  line-height: 1.9; letter-spacing: 0.1em;
+  color: rgba(246, 242, 232, 0.82);
+}
+.scene-tap {
+  font-family: var(--font-sans);
+  font-size: 11px; letter-spacing: 0.26em;
+  color: rgba(246, 242, 232, 0.6);
+  animation: tapBreathe 1.9s ease-in-out infinite;
+}
+
+/* 4.3 交互区：固定高度带，选项 + 输入 + 加载提示，永不因内容生成而移动 */
+.interact {
+  border-top: 1px solid var(--line);
+  padding: 12px 40px 14px;
+  max-height: 38vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.choices {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.choice-btn {
+  display: flex; align-items: center; gap: 14px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-0);
+  border-radius: 14px;
+  padding: 12px 22px;
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: left;
+  letter-spacing: 0.03em;
+  transition: all 0.2s ease;
+  animation: rise 0.4s ease both;
+}
+.choice-btn::before {
+  content: "→";
+  color: var(--ink-2);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+.choice-btn:hover {
+  border-color: var(--ink-0);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+.choice-btn:hover::before { color: var(--ink-0); transform: translateX(3px); }
+.choice-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 加载提示：三点脉冲，等待 LLM 推演时显示 */
+.typing-indicator {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 2px 10px;
+}
+.typing-indicator span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink-2);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+.typing-indicator em {
+  margin-left: 8px;
+  font-family: var(--font-sans); font-style: normal;
+  font-size: 12px; color: var(--ink-2); letter-spacing: 0.1em;
+}
+@keyframes pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-3px); }
+}
+
+/* 自由输入行 */
+.free-input {
+  margin-top: 12px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  transition: border-color 0.2s ease;
+}
+.free-input:focus-within { border-color: var(--ink-1); }
+.free-input input {
+  flex: 1;
+  border: none; outline: none; background: transparent;
+  color: var(--ink-0);
+  font-family: var(--font-song); font-size: 15px;
+  letter-spacing: 0.03em;
+}
+.free-input input::placeholder { color: var(--ink-2); }
+.free-input button {
+  border: none; background: transparent;
+  color: var(--ink-2); font-size: 16px;
+  transition: color 0.2s ease;
+}
+.free-input button:hover { color: var(--ink-0); }
+.free-input:has(input:disabled) { opacity: 0.4; }
+
+/* 减少动态偏好：尊重系统"减少动效"设置，全部动画退化为直接呈现 */
+@media (prefers-reduced-motion: reduce) {
+  .block { transition: none; opacity: 1; transform: none; }
+  .choice-btn { animation: none; }
+  .typing-indicator span { animation: none; opacity: 0.6; }
+  .tap-hint, .scene-tap, .stream.paging .block.page-in, .stream.paging .block.page-out { animation: none; opacity: 1; transform: none; }
+  .scene-overlay, .scene-card { transition: none; }
+}
+
+/* 4.4 底栏：返回 + 进度条 + 菜单 */
+.bottombar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 14px 40px;
+  border-top: 1px solid var(--line);
+}
+.bar-actions { display: flex; gap: 8px; }
+.icon-btn {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-0);
+  font-size: 15px;
+  transition: all 0.2s ease;
+}
+.icon-btn:hover { border-color: var(--ink-0); }
+.progress-track {
+  flex: 1; height: 3px; border-radius: 2px;
+  background: var(--line); overflow: hidden;
+}
+.progress-fill {
+  height: 100%; width: 0%;
+  background: var(--ink-0);
+  transition: width 0.4s ease;
+}
+
+/* --------------------------------------------------------------------------
+   5. 菜单弹窗
+   -------------------------------------------------------------------------- */
+.menu-panel {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(43, 40, 35, 0.35);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+}
+body[data-color-mode="dark"] .menu-panel {
+  background: rgba(0, 0, 0, 0.5);
+}
+.modal-inner {
+  width: min(420px, 88vw);
+  max-height: 80vh; overflow-y: auto;
+  background: var(--bg-1);
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: var(--shadow-lg);
+}
+.modal-inner h2 { font-size: 22px; letter-spacing: 0.08em; }
+.modal-copy {
+  margin-top: 8px;
+  font-family: var(--font-sans); font-size: 12px; color: var(--ink-2);
+}
+.home-actions {
+  margin-top: 24px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.home-actions .text-btn { text-align: center; }
+
+/* 时间线面板 */
+.timeline-panel { margin-top: 24px; }
+.timeline-panel h3 { font-size: 15px; letter-spacing: 0.06em; }
+
+/* 行囊见闻面板 */
+.status-panel { margin-top: 24px; }
+.status-h {
+  font-family: var(--font-sans);
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 0.18em; color: var(--ink-2);
+  margin: 0 0 10px;
+}
+.status-h:not(:first-child) { margin-top: 18px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-family: var(--font-song);
+  font-size: 14px; letter-spacing: 0.04em;
+  color: var(--ink-0);
+}
+.chip-flag {
+  border-style: dashed;
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  font-size: 12px; letter-spacing: 0.06em;
+}
+.chip-list .empty-hint { padding: 0; }
+.tl-item {
+  display: flex; gap: 10px; align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px; line-height: 1.6;
+}
+.tl-item.done { color: var(--ok); }
+.tl-item.done .tl-name { text-decoration: line-through; }
+.tl-item.pending { color: var(--ink-2); }
+.tl-item .tl-idx {
+  font-family: var(--font-sans); font-size: 11px;
+  min-width: 18px;
+}
+.tl-cond {
+  font-family: var(--font-sans); font-size: 11px; color: var(--ink-2);
+  margin-top: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   6. Toast 提示
+   -------------------------------------------------------------------------- */
+.toast {
+  position: fixed; left: 50%; bottom: 90px;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-sans); font-size: 13px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  opacity: 0; pointer-events: none;
+  transition: all 0.3s ease;
+  z-index: 99;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* --------------------------------------------------------------------------
+   7. 响应式
+   -------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .topbar, .bottombar, .interact { padding-left: 20px; padding-right: 20px; }
+  .brand h1 { font-size: 34px; }
+  .block-scene .story-text, .block-npc .story-text { font-size: 18px; }
+  .meter-track { width: 70px; }
+}
