@@ -1,7 +1,9 @@
 """全链路验收：债务清理后所有功能正常"""
+import os
 import requests, pathlib, json, time, sys
 
-BASE = "http://127.0.0.1:8888"
+# 服务地址：默认 8888，可用 CONTRACT_BASE 覆盖（与 test_contract.py 同一先例）
+BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 
 for i in range(10):
     try:
