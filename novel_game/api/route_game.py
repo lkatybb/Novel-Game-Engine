@@ -53,6 +53,21 @@ def _enrich_state(state, novel_id):
     return enriched
 
 
+def _ensure_state(session_id: str):
+    """确保会话状态在内存中。
+
+    服务重启会清空内存状态，此时用磁盘快照自愈（玩家无需刷新页面重开会话）；
+    磁盘也没有该会话才报错。
+    """
+    try:
+        get_state(session_id)
+    except ValueError:
+        snap = load_session(session_id)
+        if not snap:
+            raise ValueError(f"会话不存在: {session_id}") from None
+        restore_session(session_id, snap["game_state"], snap.get("short_term_memory") or [])
+
+
 class StartRequest(BaseModel):
     novel_id: str
 
@@ -201,6 +216,9 @@ async def player_action(req: ActionRequest):
             return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
         try:
+            # 服务重启会清空内存状态：先用磁盘快照自愈，避免玩家必须刷新页面才能继续
+            _ensure_state(req.session_id)
+
             # 记录旧位置：DM 在推送结果之后才更新状态，
             # 据此判断 DM 是否真的切换了场景（同名不弹场景窗）
             old_location = ""
