@@ -24,16 +24,26 @@ router = APIRouter(prefix="/api/game", tags=["game"])
 
 
 def _enrich_state(state, novel_id):
-    """把完整 key_events 清单挂到 state 上，供前端渲染时间线"""
+    """把防剧透的进度信息挂到 state 上，供前端渲染时间线。
+
+    只暴露已触发事件名，以及"下一个待触发事件"（仅 event_name + order）；
+    trigger_condition 属于剧透内容，一律不下发。
+    """
     from pipeline.character_extractor import get_key_events
-    all_events = get_key_events(novel_id)
-    all_events_sorted = sorted(all_events, key=lambda e: e.get("order", 999))
+    all_events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
+    triggered = list(state.triggered_events)
+
+    order_map = {e["event_name"]: e.get("order", 999) for e in all_events}
+    done_orders = [order_map[n] for n in triggered if n in order_map]
+    next_order = max(done_orders, default=0) + 1
+    nxt = next((e for e in all_events if e.get("order", 999) == next_order), None)
+
     enriched = state.model_dump()
-    enriched["_timeline"] = [
-        {"event_name": e["event_name"], "order": e.get("order", 999),
-         "trigger_condition": e.get("trigger_condition", "")}
-        for e in all_events_sorted
-    ]
+    enriched["triggered"] = triggered
+    enriched["next_event"] = (
+        {"event_name": nxt["event_name"], "order": nxt.get("order", 999)} if nxt else None
+    )
+    enriched["total"] = len(all_events)
     return enriched
 
 

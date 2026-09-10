@@ -826,9 +826,8 @@ function applyState(state) {
 
 /** 更新进度条（已触发关键事件 / 总事件数） */
 function updateProgress() {
-  const tl = app.state?._timeline || [];
-  const total = tl.length;
-  const triggered = (app.state?.triggered_events || []).length;
+  const total = app.state?.total || 0;
+  const triggered = (app.state?.triggered || []).length;
   const pct = total ? Math.round((triggered / total) * 100) : 0;
   dom.meterFill.style.width = `${pct}%`;
   dom.progressFill.style.width = `${pct}%`;
@@ -852,38 +851,35 @@ function closeMenu() {
   dom.menuPanel.classList.add('is-hidden');
 }
 
-/** 渧染剧情时间线（已触发 ✓ / 未触发灰） */
+/** 追加一条时间线条目 */
+function addTimelineItem(cls, idxText, eventName) {
+  const item = document.createElement('div');
+  item.className = `tl-item ${cls}`;
+  const idxEl = document.createElement('span');
+  idxEl.className = 'tl-idx';
+  idxEl.textContent = idxText;
+  const nameEl = document.createElement('div');
+  nameEl.className = 'tl-name';
+  nameEl.textContent = eventName;
+  item.append(idxEl, nameEl);
+  dom.timelineList.appendChild(item);
+}
+
+/** 渲染剧情时间线（已触发 ✓ / 下一个灰） */
 function renderTimeline() {
   dom.timelineList.innerHTML = '';
-  const tl = app.state?._timeline || [];
-  if (!tl.length) {
+  const triggered = app.state?.triggered || [];
+  const next = app.state?.next_event || null;
+  if (!triggered.length && !next) {
     const hint = document.createElement('div');
     hint.className = 'empty-hint';
     hint.textContent = '暂无时间线数据';
     dom.timelineList.appendChild(hint);
     return;
   }
-  const triggered = app.state?.triggered_events || [];
-  tl.forEach((ev, idx) => {
-    const item = document.createElement('div');
-    item.className = `tl-item ${triggered.includes(ev.event_name) ? 'done' : 'pending'}`;
-    const idxEl = document.createElement('span');
-    idxEl.className = 'tl-idx';
-    idxEl.textContent = triggered.includes(ev.event_name) ? '✓' : String(idx + 1);
-    const box = document.createElement('div');
-    const name = document.createElement('div');
-    name.className = 'tl-name';
-    name.textContent = ev.event_name;
-    box.appendChild(name);
-    if (!triggered.includes(ev.event_name) && ev.trigger_condition) {
-      const cond = document.createElement('div');
-      cond.className = 'tl-cond';
-      cond.textContent = ev.trigger_condition;
-      box.appendChild(cond);
-    }
-    item.append(idxEl, box);
-    dom.timelineList.appendChild(item);
-  });
+  // 已触发：显示事件名，标记 ✓；下一个：只显示事件名，灰色待触发
+  triggered.forEach((name) => addTimelineItem('done', '✓', name));
+  if (next) addTimelineItem('pending', '下一个', next.event_name);
 }
 
 /** 染行囊（inventory）与见闻（flags），空态有弱化提示 */
