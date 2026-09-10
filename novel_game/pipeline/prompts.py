@@ -79,5 +79,5 @@ NPC_SYSTEM = """你是一个角色扮演Agent。根据NPC的人设档案，生�
 - [玩家行为] 玩家对NPC做了什么
 - [当前状态] 场景和已有物品
 
-输出JSON：{"dialogue": "NPC说的一段话", "emotion": "NPC当前情绪"}
+输出JSON：{"dialogue": "NPC说的一段话"}
 """

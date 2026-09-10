@@ -443,10 +443,6 @@ function handleSsePart(part) {
       // 选项延迟到正文最后一页才出现
       app.pendingChoices = evt.options || [];
       break;
-    case 'result':
-      // 兼容旧后端协议：choices 藏在 result.data 里（防御性回退）
-      if (evt.data && Array.isArray(evt.data.choices)) app.pendingChoices = evt.data.choices;
-      break;
     case 'state':
       applyState(evt.state);
       break;

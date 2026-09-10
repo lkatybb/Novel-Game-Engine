@@ -222,13 +222,6 @@ def get_npc_profile(novel_id: str, character_name: str) -> dict:
     return profiles.get(character_name, {})
 
 
-def get_all_npcs(novel_id: str) -> dict:
-    """获取所有NPC人设档案"""
-    if not _ensure_loaded(novel_id):
-        return {}
-    return _cache[novel_id].get("npc_profiles", {})
-
-
 def get_key_events(novel_id: str) -> list[dict]:
     """
     获取关键事件清单（硬锁机制使用）

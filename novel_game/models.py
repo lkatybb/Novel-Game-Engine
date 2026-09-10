@@ -17,12 +17,6 @@ class GameState(BaseModel):
     triggered_events: list[str] = Field(default_factory=list)  # 已触发的关键事件名
 
 
-class PlayerAction(BaseModel):
-    """玩家输入"""
-    action_type: str = "free_input"  # "choice" | "free_input"
-    content: str = ""
-
-
 class AgentState(TypedDict, total=False):
     """LangGraph 节点间传递的状态（见 agents/graph.py）
 

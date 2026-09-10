@@ -305,7 +305,7 @@ async def player_action(req: ActionRequest):
             yield sse({'type': 'done'})
 
         except Exception as e:
-            logger.exception("玩家动作处理异常")
+            logger.warning("玩家动作处理异常: %s", e)
             yield sse({'type': 'error', 'message': str(e)})
             yield sse({'type': 'done'})
 

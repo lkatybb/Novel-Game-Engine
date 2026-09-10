@@ -69,7 +69,7 @@ def dm_inference(session_id: str, novel_id: str, player_action: str) -> dict:
             )
             result = json.loads(response.choices[0].message.content)
             break
-        except (json.JSONDecodeError, Exception) as e:
+        except Exception as e:
             if attempt == 0:
                 logger.warning("DM推理失败，重试: %s", e)
                 continue
