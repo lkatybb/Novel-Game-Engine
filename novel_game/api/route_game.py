@@ -14,7 +14,7 @@ from memory.short_term import add as add_memory, get as get_memory
 from memory.long_term import retrieve, format_context
 from agents.graph import stream_graph
 from pipeline.prompts import DM_SYSTEM
-from config import LLM_MODEL, get_llm_client
+from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
 from memory.session_store import (
     save_session, load_session,
     add_session_to_novel, update_session_meta, list_sessions_for_novel,
@@ -71,7 +71,7 @@ async def start_game(req: StartRequest):
                 {"role": "user", "content": f"游戏开始。请根据以下原著内容生成开场场景。\n\n[原著开头]\n{long_mem}\n\n请输出JSON。"},
             ],
             response_format={"type": "json_object"},
-            max_tokens=2048,
+            max_tokens=LLM_MAX_TOKENS,
         )
         result = json.loads(response.choices[0].message.content)
 
@@ -151,7 +151,7 @@ async def resume_game(req: ResumeRequest):
                     f"（玩家继续，给出{len(state.triggered_events)}个关键事件已发生：{state.triggered_events or '刚开始'}）请给出2-4个当前可选的下一步行动建议。")},
             ],
             response_format={"type": "json_object"},
-            max_tokens=1024,
+            max_tokens=LLM_MAX_TOKENS,
         )
         cont_result = json.loads(cont_response.choices[0].message.content)
         choices = cont_result.get("choices", [])
