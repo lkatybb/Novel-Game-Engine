@@ -8,6 +8,7 @@ from pipeline.prompts import DM_SYSTEM
 from memory.short_term import format_memory
 from memory.global_state import format_state, get_next_event
 from memory.long_term import retrieve, format_context
+from memory.session_memory import format_early_nodes, record_turn
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,9 @@ logger = logging.getLogger(__name__)
 def _build_prompt(session_id: str, novel_id: str, player_action: str) -> str:
     """组装DM上下文（推理和流式共用）"""
     short_mem = format_memory(session_id)
+    # 短期记忆只保留最近几轮，更早的靠会话脉络补上，否则早期关键剧情会被彻底忘掉
+    early_nodes = format_early_nodes(session_id)
+    early_block = f"\n[早期关键节点]\n{early_nodes}" if early_nodes else ""
     state_text = format_state(session_id)
     retrieved = retrieve(novel_id, player_action)
     long_mem = format_context(retrieved)
@@ -34,7 +38,7 @@ def _build_prompt(session_id: str, novel_id: str, player_action: str) -> str:
 
     return f"""[短期记忆]
 {short_mem}
-
+{early_block}
 [长期记忆]
 {long_mem}
 
@@ -79,13 +83,15 @@ def dm_inference(session_id: str, novel_id: str, player_action: str) -> dict:
 
 
 def dm_update_memory(session_id: str, player_action: str, result: dict):
-    """更新短期记忆、全局状态，并检查硬锁关键事件是否触发"""
+    """更新短期记忆、全局状态、会话脉络，并检查硬锁关键事件是否触发"""
     from memory.short_term import add as add_memory
-    from memory.global_state import update_state, trigger_event
+    from memory.global_state import get_state, update_state, trigger_event
 
     add_memory(session_id, {"player": player_action, "dm": result.get("story", "")})
 
     state_changes = result.get("state_changes", {})
+    # update_state 也会把通过闸门的 triggered_events 写进 state，先取快照以算本轮新增
+    before = set(get_state(session_id).triggered_events)
     if state_changes:
         update_state(session_id, state_changes)
 
@@ -105,6 +111,9 @@ def dm_update_memory(session_id: str, player_action: str, result: dict):
             logger.info("关键事件已触发: %s", en)
         except Exception as e:
             logger.warning("trigger_event(%s) 失败: %s", en, e)
+
+    new_events = [e for e in get_state(session_id).triggered_events if e not in before]
+    record_turn(session_id, player_action, result.get("story", ""), new_events)
 
 
 def dm_run(session_id: str, novel_id: str, player_action: str) -> dict:

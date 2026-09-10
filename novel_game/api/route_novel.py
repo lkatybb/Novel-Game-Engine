@@ -13,6 +13,7 @@ from memory.session_store import (
     add_novel, delete_session_file, get_novel_meta, list_novels, remove_novel,
 )
 from memory.short_term import drop as drop_memory
+from memory.session_memory import drop as drop_session_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/novel", tags=["novel"])
@@ -91,6 +92,7 @@ async def delete_novel(novel_id: str):
         delete_session_file(sid)
         drop_state(sid)
         drop_memory(sid)
+        drop_session_memory(sid)
 
     remove_novel(novel_id)
     logger.info("已删除小说: novel_id=%s, 连带存档 %d 条, 向量集合删除=%s",

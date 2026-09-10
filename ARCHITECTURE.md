@@ -29,6 +29,7 @@ e:\小说\novel_game\
 │   ├── short_term.py             # 短期记忆：List维护最近5轮对话
 │   ├── long_term.py              # 长期记忆：ChromaDB向量检索
 │   ├── global_state.py           # 全局状态：Dict维护位置/物品/flag
+│   ├── session_memory.py         # 会话脉络：早期关键节点缓存（派生物，不变量来源）
 │   └── session_store.py          # 存档：原子写入 + 会话快照
 │
 ├── agents/                       # LangGraph多Agent
@@ -60,7 +61,10 @@ e:\小说\novel_game\
 │   └── relation.html             # 人物关系力导图（D3.js单文件）
 │
 └── data/                         # 数据
-    └── novels/                   # 测试小说文件
+    ├── novels/                   # 测试小说文件
+    ├── sessions/                 # 存档快照（真相来源）
+    ├── character_cache/          # 人物关系 / 关键事件缓存（派生）
+    └── session_memory/           # 会话脉络：早期关键节点缓存（派生，随删存档/删小说清理）
 ```
 
 ## 三、核心数据结构

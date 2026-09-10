@@ -7,6 +7,7 @@ __pycache__/
 # ---- 运行时 / 派生数据：含小说原文的衍生内容，不入库 ----
 data/sessions/
 data/character_cache/
+data/session_memory/
 data/bookshelf.json
 
 # 上传的小说正文与封面图（第三方版权）；仅保留测试样本

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from memory.global_state import init_state, get_state, update_state, restore_session, drop_state
 from memory.short_term import add as add_memory, drop as drop_memory, get as get_memory
+from memory.session_memory import drop as drop_session_memory
 from memory.long_term import retrieve, format_context
 from agents.graph import stream_graph
 from pipeline.prompts import DM_SYSTEM
@@ -222,6 +223,7 @@ async def delete_session(session_id: str):
     remove_session_from_novel(novel_id, session_id)
     drop_state(session_id)
     drop_memory(session_id)
+    drop_session_memory(session_id)
 
     return {"deleted": session_id, "novel_id": novel_id}
 

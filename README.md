@@ -29,6 +29,7 @@
 - 短期记忆用 `deque` 而非 list，溢出自动淘汰，不需要手动裁剪。
 - 长期记忆用**余弦距离**检索 top-5（`RETRIEVAL_TOP_K`），结果拼成 `[原著片段N]` 注入 Prompt。
 - 检索失败时返回空列表并记日志，不阻断本轮推演（[`long_term.py`](novel_game/memory/long_term.py) 的 `retrieve`）。
+- **会话脉络**（[`memory/session_memory.py`](novel_game/memory/session_memory.py)）：短期记忆窗口只有 5 轮，再往前的历史会整段丢失，AI 到后期就忘了第 1 章做过什么。每轮结束后把该轮的「玩家动作 + 剧情摘录 + 本轮触发的关键事件」压成一条关键节点落盘到 `data/session_memory/`，组装 Prompt 时补在 `[短期记忆]` 之后，**只补已滑出窗口的轮次**，同一轮不会重复出现。有界性：滑出窗口的轮次最多注入 `EARLY_NODE_LIMIT`（10）条，更早的只保留触发过关键事件的节点 —— 普通对话随剧情淡出，主线关键节点永久保留。
 
 ### 2. 关键事件硬锁
 
@@ -105,6 +106,7 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
     │   ├── short_term.py
     │   ├── long_term.py
     │   ├── global_state.py     # 含关键事件硬锁
+    │   ├── session_memory.py   # 会话脉络：早期关键节点缓存（派生物）
     │   └── session_store.py    # 存档：原子写入 + 会话快照
     ├── agents/                 # LangGraph 多 Agent
     │   ├── graph.py            # StateGraph 定义 + 条件边
@@ -292,6 +294,7 @@ python _diag_sse.py
 data/novels/*              # 上传的小说正文与封面（第三方版权），仅保留测试样本
 data/sessions/*.json       # 会话快照，含 AI 生成的剧情正文
 data/character_cache/*     # 从小说原文提取的人物关系 / 关键事件
+data/session_memory/*.json # 会话脉络：早期关键节点缓存（随存档派生，可重建）
 data/bookshelf.json        # 书架索引
 ```
 

@@ -19,11 +19,13 @@ NOVELS_DIR = DATA_DIR / "novels"
 CHROMA_DIR = BASE_DIR / "chroma_db"
 SESSIONS_DIR = DATA_DIR / "sessions"
 CHARACTER_CACHE_DIR = DATA_DIR / "character_cache"
+SESSION_MEMORY_DIR = DATA_DIR / "session_memory"
 
 # 确保目录存在
 NOVELS_DIR.mkdir(parents=True, exist_ok=True)
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
 # DeepSeek LLM 配置
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
@@ -67,6 +69,7 @@ def get_embedding_function():
 # RAG 检索配置
 RETRIEVAL_TOP_K = 5          # 长期记忆检索返回段落数
 SHORT_TERM_LIMIT = 5         # 短期记忆保留轮数
+EARLY_NODE_LIMIT = 10        # 会话脉络注入 prompt 的"滑出窗口"轮次上限
 CHUNK_SIZE = 800             # 小说切片字数
 CHUNK_OVERLAP = 100         # 切片重叠字数
 

@@ -62,10 +62,10 @@ BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 ROOT = Path(__file__).resolve().parent
 
 # 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
-#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11 + PRE-1~3 + A6 + A1-A5/A8
-#            + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-#   delete = 删除能力快层（迭代替换用）：A9/A10/A11 + PRE-1~3 + B9-B12
-#            + B0-B7/B13/B6a/B6b，跳过 A6、/action 组（A1-A5/A8）、/resume 的 A7 与最贵的 B8
+#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11 + B14 + PRE-1~3 + A6 + A1-A5/A8
+#            + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
+#   delete = 删除能力快层（迭代替换用）：A9/A10/A11 + B14 + PRE-1~3 + B9-B12/B14e
+#            + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、/resume 的 A7 与最贵的 B8
 # 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
 SCOPE = os.environ.get("CONTRACT_SCOPE", "full")
 if SCOPE not in ("delete", "full"):
@@ -404,6 +404,83 @@ def check_a11_masking():
           f"DM prompt 未触发事件名 = {leaked}（应恰好 1 个）；trigger_condition 泄露 = {conditions}")
 
 
+def check_session_memory():
+    """B14：N3 会话脉络（早期关键节点缓存）的离线契约。
+
+    ① 每轮落盘；② 注入窗口 = 短期记忆之外（窗口未满时不重复注入）；
+    ③ 滑出窗口的轮次超过 EARLY_NODE_LIMIT 后，无关键事件的早期节点被丢弃、
+       触发过关键事件的早期节点永久保留（prompt 有界但不丢主线）；
+    ④ 集成：`dm._build_prompt` 真的把这段带进了 prompt。
+    """
+    import memory.session_memory as session_memory
+    import memory.short_term as short_term
+    from config import EARLY_NODE_LIMIT, SESSION_MEMORY_DIR, SHORT_TERM_LIMIT
+
+    probe = "b14-memory-probe"
+    path = SESSION_MEMORY_DIR / f"{probe}.json"
+    path.unlink(missing_ok=True)
+    short_term.drop(probe)
+
+    def turn(action: str, story: str, events: list[str]):
+        # 与 dm_update_memory 同序：先入短期记忆，再记会话脉络
+        short_term.add(probe, {"player": action, "dm": story})
+        session_memory.record_turn(probe, action, story, events)
+
+    try:
+        turn("我救下樵夫", "你解开绳索，樵夫塞给你一枚木牌。", ["石猴出世"])   # 关键事件轮
+        first = session_memory.load(probe)["nodes"][0]
+        check("B14a", first["turn"] == 1 and first["events"] == ["石猴出世"]
+              and first["story"].startswith("你解开绳索"),
+              f"每轮落盘: {path.name}，node = {first}")
+
+        in_window = session_memory.format_early_nodes(probe)
+        check("B14b", in_window == "",
+              f"短期记忆窗口未满时不重复注入早期节点（应为空串，实为 {in_window!r}）")
+
+        for i in range(2, SHORT_TERM_LIMIT + 3):        # 继续推演到窗口溢出
+            turn(f"动作{i}", f"第{i}轮的剧情。", [])
+        text = session_memory.format_early_nodes(probe)
+        nodes_total = len(session_memory.load(probe)["nodes"])
+        check("B14c",
+              "第1轮" in text and f"第{nodes_total}轮" not in text,
+              f"仅注入滑出窗口的轮次（共 {nodes_total} 轮、窗口 {SHORT_TERM_LIMIT} 轮）:\n{text}")
+
+        for i in range(SHORT_TERM_LIMIT + 3, SHORT_TERM_LIMIT + 14):
+            turn(f"动作{i}", f"第{i}轮的剧情。", [])
+        text = session_memory.format_early_nodes(probe)
+        nodes_total = len(session_memory.load(probe)["nodes"])
+        evicted = nodes_total - SHORT_TERM_LIMIT
+        check("B14d",
+              "第1轮" in text and "第2轮" not in text
+              and f"第{evicted - EARLY_NODE_LIMIT}轮" not in text,
+              f"滑出 {evicted} 轮 > 上限 {EARLY_NODE_LIMIT}："
+              f"关键事件轮保留、早期普通轮丢弃\n{text}")
+
+        # B14g：集成断言——dm._build_prompt 真的把早期关键节点带进了 prompt
+        import agents.dm as dm
+        import memory.global_state as global_state
+
+        global_state.init_state(probe, "b14-novel")
+        orig_key_events = global_state.get_key_events
+        orig_retrieve, orig_format_context = dm.retrieve, dm.format_context
+        try:
+            global_state.get_key_events = lambda novel_id: []
+            dm.retrieve = lambda novel_id, query: []       # 避开 ChromaDB 检索
+            dm.format_context = lambda retrieved: "（无）"
+            prompt = dm._build_prompt(probe, "b14-novel", "我继续赶路")
+        finally:
+            global_state.get_key_events = orig_key_events
+            dm.retrieve, dm.format_context = orig_retrieve, orig_format_context
+            global_state.drop_state(probe)
+        memory_block = prompt[prompt.index("[短期记忆]"):prompt.index("[长期记忆]")]
+        check("B14g", f"[早期关键节点]\n{text}" in prompt,
+              f"prompt 已带早期关键节点块（总 {nodes_total} 轮、窗口 {SHORT_TERM_LIMIT} 轮）：\n"
+              f"{memory_block}")
+    finally:
+        path.unlink(missing_ok=True)
+        short_term.drop(probe)
+
+
 def check_session_delete(novel_id: str, kept_session_id: str):
     """B9-B12：TU-4 删除存档的零残留、幂等与"不存在即报错"语义。
 
@@ -414,11 +491,28 @@ def check_session_delete(novel_id: str, kept_session_id: str):
     sid = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))["session_id"]
     print(f"[INFO] TU-4 另开一条待删存档 session_id={sid}")
 
+    # B14e：会话脉络派生物必须随存档一起消失（TU-11 登记的"孤儿数据"坑）
+    import memory.session_memory as session_memory
+    from config import SESSION_MEMORY_DIR
+
+    memory_path = SESSION_MEMORY_DIR / f"{sid}.json"
+    session_memory.record_turn(sid, "我救下樵夫", "你解开绳索，樵夫塞给你一枚木牌。", ["石猴出世"])
+    check("B14e-0", memory_path.exists(), f"删除前会话脉络已就位: {memory_path.name}")
+
+    if SCOPE == "full":
+        # B14h：真实推演链路（/action → dm_update_memory → record_turn）必须落盘
+        kept_path = SESSION_MEMORY_DIR / f"{kept_session_id}.json"
+        kept_nodes = session_memory.load(kept_session_id).get("nodes", [])
+        check("B14h", kept_path.exists() and len(kept_nodes) > 0,
+              f"真实推演后会话脉络已落盘: {kept_path.name}，{len(kept_nodes)} 条节点，"
+              f"末条 = {kept_nodes[-1] if kept_nodes else None}")
+
     status, body = request_json("DELETE", f"/api/game/sessions/{sid}")
     check("B9-0", status == 200, f"DELETE 存档 -> HTTP {status}，body = {body}")
 
     path = SESSIONS_DIR / f"{sid}.json"
     check("B9", not path.exists(), f"磁盘快照已删除: {path.name}")
+    check("B14e", not memory_path.exists(), f"删存档连带清掉会话脉络: {memory_path.name}")
 
     entry = novel_entry(novel_id) or {}
     sids = [s["session_id"] for s in entry.get("sessions", [])]
@@ -504,6 +598,14 @@ def check_novel_delete():
 
     check_drop_containers(novel_id, sid1)
 
+    # B14f：删小说连带清掉其下所有存档的会话脉络
+    import memory.session_memory as session_memory
+    from config import SESSION_MEMORY_DIR
+
+    memory_paths = [SESSION_MEMORY_DIR / f"{s}.json" for s in (sid1, sid2)]
+    for p in memory_paths:
+        session_memory.record_turn(p.stem, "我环顾四周", "四周一片寂静。", [])
+
     status, body = request_json("DELETE", f"/api/novel/{novel_id}")
     check("B2", status == 200 and body.get("vector_deleted") is True,
           f"DELETE 小说 -> HTTP {status}，body = {body}（首次删除 vector_deleted 应为 True）")
@@ -513,6 +615,8 @@ def check_novel_delete():
     snaps = [SESSIONS_DIR / f"{s}.json" for s in (sid1, sid2)]
     check("B4", not any(p.exists() for p in snaps),
           f"该书全部存档快照已删除: {[p.name for p in snaps]}")
+    check("B14f", not any(p.exists() for p in memory_paths),
+          f"删小说连带清掉会话脉络: {[p.name for p in memory_paths]}")
     check("B5", novel_entry(novel_id) is None, "书架已无该条目")
     check("B7", f"{novel_id}_chapters" not in collection_names(),
           f"chroma 已无 {novel_id}_chapters 集合")
@@ -619,6 +723,7 @@ def main():
     check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
+    check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
         return
