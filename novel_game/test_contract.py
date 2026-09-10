@@ -21,8 +21,9 @@
            （不依赖服务，故先于网络检查执行）
     A10    离线确定性断言：关键事件 order 在提取出口归一化为稠密 1..N，
            且归一化后的清单能通过硬锁门槛
-    A11    离线双向断言：DM 自由文本容器命中事件名 → A4 必须通过（Mask 生效）；
-           结构性字段泄露未触发事件名 → A4 必须失败（鉴别力保留）
+    A11    离线三向断言：DM 自由文本容器命中事件名 → A4 必须通过（Mask 生效）；
+           结构性字段泄露未触发事件名 → A4 必须失败（鉴别力保留）；
+           DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）
     PRE-1  测试样本文件存在
     PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
@@ -354,6 +355,8 @@ def check_a11_masking():
       A11-1 三个容器全部命中未触发事件名 → A4 必须通过，且 masked_hits 必须非空
             （不判 masked_hits 的话，空 state 也能让这条断言成立 → 等于没测）
       A11-2 再往结构面塞一个未触发事件名 → A4 必须失败（鉴别力保留）
+      A11-3 DM prompt 只许出现 1 个未触发事件名，且不下发 trigger_condition
+            （防剧透：旧实现一次塞 8 条未触发事件 + 触发条件）
     """
     order_map = {"石猴出世": 1, "发现水帘洞": 2, "称美猴王": 3, "拜师菩提": 4}
     base = {"triggered": ["石猴出世"],
@@ -373,6 +376,32 @@ def check_a11_masking():
     leaky = dict(dirty, _timeline=[{"event_name": "称美猴王"}, {"event_name": "拜师菩提"}])
     reason2, _ = convergence_reason(leaky, order_map)
     check("A11-2", reason2 != "", f"结构性泄露 → A4 原因 = {reason2!r}")
+
+    # A11-3：直调 _build_prompt，数 DM prompt 里泄露了几个未触发事件名
+    import agents.dm as dm
+    import memory.global_state as global_state
+
+    probe = "a11-prompt-probe"
+    events = [{"event_name": n, "order": o, "trigger_condition": f"触发条件{o}"}
+              for n, o in order_map.items()]
+    original_key_events = global_state.get_key_events
+    original_retrieve, original_format_context = dm.retrieve, dm.format_context
+    try:
+        global_state.get_key_events = lambda novel_id: events
+        dm.retrieve = lambda novel_id, query: []      # 避开 ChromaDB 检索
+        dm.format_context = lambda retrieved: "（无）"
+        global_state.init_state(probe, "a11-novel")
+        global_state.update_state(probe, {"triggered_events": ["石猴出世"]})
+        prompt = dm._build_prompt(probe, "a11-novel", "我环顾四周")
+    finally:
+        global_state.get_key_events = original_key_events
+        dm.retrieve, dm.format_context = original_retrieve, original_format_context
+
+    untriggered = [n for n in order_map if n != "石猴出世"]
+    leaked = sorted(n for n in untriggered if n in prompt)
+    conditions = sorted(f"触发条件{o}" for o in order_map.values() if f"触发条件{o}" in prompt)
+    check("A11-3", leaked == ["发现水帘洞"] and not conditions,
+          f"DM prompt 未触发事件名 = {leaked}（应恰好 1 个）；trigger_condition 泄露 = {conditions}")
 
 
 def check_session_delete(novel_id: str, kept_session_id: str):

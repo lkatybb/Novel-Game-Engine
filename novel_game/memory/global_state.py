@@ -144,6 +144,28 @@ def get_untriggered_events(novel_id: str, session_id: str) -> list[dict]:
     return untriggered
 
 
+def get_next_event(session_id: str) -> dict | None:
+    """
+    取"下一个待触发关键事件"，只返回 event_name + order（无未触发事件时返回 None）。
+
+    选取口径与 api/route_game._enrich_state 一致：未触发事件中 order > max(已触发 order) 的最小者。
+    不假设 order 连续——LLM 抽取的编号可能跳号或缺字段（缺字段由提取器补 999），
+    按 max(已触发)+1 精确匹配会让结果静默变空。
+    trigger_condition 属剧透内容，一律不暴露。
+    """
+    state = get_state(session_id)
+    triggered = set(state.triggered_events)
+    all_events = sorted(get_key_events(state.novel_id), key=lambda e: e.get("order", 999))
+    order_map = {e["event_name"]: e.get("order", 999) for e in all_events}
+    done_max = max((order_map[n] for n in triggered if n in order_map), default=None)
+    nxt = next((e for e in all_events
+                if e["event_name"] not in triggered
+                and (done_max is None or e.get("order", 999) > done_max)), None)
+    if nxt is None:
+        return None
+    return {"event_name": nxt["event_name"], "order": nxt.get("order", 999)}
+
+
 def format_state(session_id: str) -> str:
     """格式化为Prompt可用文本"""
     s = get_state(session_id)

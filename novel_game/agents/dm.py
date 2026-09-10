@@ -6,7 +6,7 @@ import re
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
 from pipeline.prompts import DM_SYSTEM
 from memory.short_term import format_memory
-from memory.global_state import format_state
+from memory.global_state import format_state, get_next_event
 from memory.long_term import retrieve, format_context
 
 logger = logging.getLogger(__name__)
@@ -19,18 +19,18 @@ def _build_prompt(session_id: str, novel_id: str, player_action: str) -> str:
     retrieved = retrieve(novel_id, player_action)
     long_mem = format_context(retrieved)
 
-    # 注入未触发的关键事件（硬锁机制）
-    from memory.global_state import get_untriggered_events
+    # 只注入"下一个待触发关键事件"：一次把整条未触发清单塞进 prompt 等于提前把后文剧情告诉模型，
+    # 且原先连 trigger_condition 一起下发，等于把"何时该发生"也剧透掉
     try:
-        untriggered = get_untriggered_events(novel_id, session_id)
+        nxt = get_next_event(session_id)
     except ValueError:
-        untriggered = []  # 游戏未初始化时忽略
+        nxt = None  # 游戏未初始化时忽略
 
     key_events_text = ""
-    if untriggered:
-        lines = [f"  {e['order']}. {e['event_name']} — 触发条件: {e['trigger_condition']}"
-                 for e in untriggered[:8]]
-        key_events_text = f"\n\n[必须发生的关键事件（尚未触发）]\n你有责任在合适时机自然推进这些事件发生，不能让玩家跳过或改变结果。\n" + "\n".join(lines)
+    if nxt:
+        key_events_text = (f"\n\n[下一个必须发生的关键事件]\n"
+                           f"  {nxt['order']}. {nxt['event_name']}\n"
+                           f"你有责任在合适时机自然推进它发生，不能让玩家跳过或改变结果。")
 
     return f"""[短期记忆]
 {short_mem}
