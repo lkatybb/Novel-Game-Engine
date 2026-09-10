@@ -10,6 +10,12 @@
 运行方式：
     python test_contract.py
 
+验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
+    full   A9/A10/A11 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+           （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
+    非法取值以 exit 2 报错退出，不静默回落 full。
+
 检查项：
     A9     离线确定性断言：直调 _enrich_state，锁死 order 不连续 / 缺 order 的事件清单
            （不依赖服务，故先于网络检查执行）
@@ -53,6 +59,17 @@ from urllib.request import Request, urlopen
 #   $env:CONTRACT_BASE='http://127.0.0.1:8889'
 BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 ROOT = Path(__file__).resolve().parent
+
+# 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
+#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11 + PRE-1~3 + A6 + A1-A5/A8
+#            + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+#   delete = 删除能力快层（迭代替换用）：A9/A10/A11 + PRE-1~3 + B9-B12
+#            + B0-B7/B13/B6a/B6b，跳过 A6、/action 组（A1-A5/A8）、/resume 的 A7 与最贵的 B8
+# 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
+SCOPE = os.environ.get("CONTRACT_SCOPE", "full")
+if SCOPE not in ("delete", "full"):
+    print(f"[FATAL] CONTRACT_SCOPE 取值非法: {SCOPE!r}，只允许 delete | full")
+    sys.exit(2)
 SAMPLE = Path(__file__).resolve().parent / "data" / "novels" / "西游记-样本.txt"
 
 # SSE 协议白名单 / 必含事件（API 契约，不得静默变化）
@@ -509,40 +526,8 @@ def check_reupload():
     check("B8-3", status == 200, f"清理性删除重传小说 -> HTTP {status}，body = {body}")
 
 
-def main():
-    print("=" * 72)
-    print("TU-10a/10d 接口契约测试（SSE / state 协议）")
-    print("=" * 72)
-
-    check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
-    check_offline_order_contract()  # A10：order 稠密契约，同样离线
-    check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
-
-    if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
-        return
-    if not check("PRE-2", wait_server(), f"服务可达: {BASE}"):
-        return
-
-    print(f"[INFO] 运行开始 bookshelf = {shelf_ids()}")
-    novel_id = json.loads(upload(SAMPLE))["novel_id"]
-    print(f"[INFO] 上传完成 novel_id={novel_id}")
-    # 关键事件清单取自人物缓存文件（A4 需要完整事件名与 order）
-    cache_path = (Path(__file__).resolve().parent / "data" / "character_cache"
-                  / f"{novel_id}_characters.json")
-    key_events = []
-    if cache_path.exists():
-        key_events = json.loads(cache_path.read_text(encoding="utf-8")).get("key_events", [])
-    order_map = {e["event_name"]: e.get("order", 999) for e in key_events if e.get("event_name")}
-    if not check("PRE-3", len(order_map) > 0, f"关键事件数 = {len(order_map)}（A4 判定依据）"):
-        return
-
-    # ---------- /start ----------
-    start_data = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
-    session_id = start_data["session_id"]
-    print(f"[INFO] 开局完成 session_id={session_id}")
-    check_state_contract("A6", start_data["state"], "/start", order_map)
-
-    # ---------- /action ----------
+def check_sse_contract(novel_id: str, session_id: str, order_map: dict):
+    """A1-A5 / A8：/action 的 SSE 协议与防剧透契约（full 层专用）"""
     events, sse_text = post_sse("/api/game/action", {
         "session_id": session_id, "novel_id": novel_id,
         "action": "我环顾四周，仔细打量眼前的环境。",
@@ -568,37 +553,83 @@ def main():
     if state is None:
         for cid in ("A4", "A5", "A8"):
             check(cid, False, "SSE 中未取到 state 事件，无法判定")
-    else:
-        triggered = state.get("triggered")
+        return
 
-        # A4：收敛性——有未触发事件时 state 中必须恰好出现 1 个未触发事件名。
-        # 一个都不露（把 next_event 也一起藏掉）会让 β 方案静默退化成"全隐藏"，判失败。
-        reason, masked_hits = convergence_reason(state, order_map)
-        check("A4", not reason, "SSE state 未触发事件名收敛" + ("" if not reason else "：" + reason))
-        print(f"[INFO] 已 Mask 的 DM 自由文本容器命中未触发事件名 = {masked_hits or '无'}"
-              f"（仅观测，不参与断言）")
+    triggered = state.get("triggered")
 
-        # A5：state 契约三字段（含 A8 口径）
-        check_state_contract("A5", state, "/action SSE", order_map)
+    # A4：收敛性——有未触发事件时 state 中必须恰好出现 1 个未触发事件名。
+    # 一个都不露（把 next_event 也一起藏掉）会让 β 方案静默退化成"全隐藏"，判失败。
+    reason, masked_hits = convergence_reason(state, order_map)
+    check("A4", not reason, "SSE state 未触发事件名收敛" + ("" if not reason else "：" + reason))
+    print(f"[INFO] 已 Mask 的 DM 自由文本容器命中未触发事件名 = {masked_hits or '无'}"
+          f"（仅观测，不参与断言）")
 
-        # A8：正向断言——next_event 不得被藏掉，且必须是未触发中 order 最小者
-        reason = next_event_reason(state, order_map)
-        check("A8", not reason, "SSE state next_event 正向断言" + ("" if not reason else "：" + reason))
+    # A5：state 契约三字段（含 A8 口径）
+    check_state_contract("A5", state, "/action SSE", order_map)
 
-        # 诊断（不断言）：整条报文里未触发事件名的出现情况，供评审判断
-        whole = [n for n in order_map if n not in (triggered or []) and n in sse_text]
-        print(f"[INFO] 整条 SSE 报文中出现的未触发事件名 = {whole}")
+    # A8：正向断言——next_event 不得被藏掉，且必须是未触发中 order 最小者
+    reason = next_event_reason(state, order_map)
+    check("A8", not reason, "SSE state next_event 正向断言" + ("" if not reason else "：" + reason))
 
-    # ---------- /resume ----------
+    # 诊断（不断言）：整条报文里未触发事件名的出现情况，供评审判断
+    whole = [n for n in order_map if n not in (triggered or []) and n in sse_text]
+    print(f"[INFO] 整条 SSE 报文中出现的未触发事件名 = {whole}")
+
+
+def check_resume_contract(session_id: str, order_map: dict):
+    """A7：/resume 的 state 契约（full 层专用）"""
     resume_data = json.loads(post_json("/api/game/resume", {"session_id": session_id}))
     check_state_contract("A7", resume_data["state"], "/resume", order_map)
+
+
+def main():
+    print("=" * 72)
+    print(f"TU-10a/10d 接口契约测试（SSE / state 协议）｜CONTRACT_SCOPE={SCOPE}")
+    print("=" * 72)
+
+    check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
+    check_offline_order_contract()  # A10：order 稠密契约，同样离线
+    check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
+
+    if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
+        return
+    if not check("PRE-2", wait_server(), f"服务可达: {BASE}"):
+        return
+
+    print(f"[INFO] 运行开始 bookshelf = {shelf_ids()}")
+    novel_id = json.loads(upload(SAMPLE))["novel_id"]
+    print(f"[INFO] 上传完成 novel_id={novel_id}")
+    # 关键事件清单取自人物缓存文件（A4 需要完整事件名与 order）
+    cache_path = (Path(__file__).resolve().parent / "data" / "character_cache"
+                  / f"{novel_id}_characters.json")
+    key_events = []
+    if cache_path.exists():
+        key_events = json.loads(cache_path.read_text(encoding="utf-8")).get("key_events", [])
+    order_map = {e["event_name"]: e.get("order", 999) for e in key_events if e.get("event_name")}
+    if not check("PRE-3", len(order_map) > 0, f"关键事件数 = {len(order_map)}（A4 判定依据）"):
+        return
+
+    # ---------- /start（两层都需要：delete 层要用 session_id 做 B10 的"同书其他存档仍在"基准）----------
+    start_data = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
+    session_id = start_data["session_id"]
+    print(f"[INFO] 开局完成 session_id={session_id}")
+
+    if SCOPE == "full":
+        check_state_contract("A6", start_data["state"], "/start", order_map)
+        check_sse_contract(novel_id, session_id, order_map)   # A1-A5 / A8
+        check_resume_contract(session_id, order_map)          # A7
+    else:
+        print("[INFO] CONTRACT_SCOPE=delete：跳过 A6、/action（A1-A5/A8）与 /resume（A7）")
 
     # ================= TU-4：删除存档（B9-B12）=================
     check_session_delete(novel_id, session_id)
 
     # ================= TU-5：删除小说（B1-B8 / B6a / B6b）=================
     check_novel_delete()
-    check_reupload()
+    if SCOPE == "full":
+        check_reupload()
+    else:
+        print("[INFO] CONTRACT_SCOPE=delete：跳过 B8（重传，最贵的一项）")
 
     print(f"[INFO] 运行结束 bookshelf = {shelf_ids()}")
 
