@@ -26,7 +26,7 @@
 | F1 | 小说解析入库 | 上传TXT/MD小说，按章节切片，Embedding入ChromaDB | AI-Reader-V2 embedding_service | 小 |
 | F2 | RAG分层记忆 | 短期(List 5轮) + 长期(向量检索) + 全局状态(Dict) | 新开发，参考AI-Reader-V2检索逻辑 | 中 |
 | F3 | DM Agent | 接收玩家动作，结合记忆检索结果，推演剧情 | 新开发 | 中 |
-| F4 | 多Agent协作 | Router→NPC→Rules三Agent分工 | LangGraph新开发 | 中 |
+| F4 | 多Agent协作 | Router→NPC→DM 三节点分工（Rules 已合并进 Router，见 §8 风险表） | LangGraph新开发 | 中 |
 | F5 | 流式输出 | 后端SSE流式返回剧情文本 | 新开发 | 小 |
 | F6 | 游戏前端 | 选项按钮 + 自由输入 + 场景描述 + 状态面板 | 参考Story-to-Game启动器 | 中 |
 | F7 | 人物关系力导图 | D3.js可视化人物关系 | LLM提取关系JSON（参考AI-Reader-V2聚合逻辑） | 小 |
@@ -52,16 +52,14 @@
 玩家操作（选项/自由输入）
     │
     ▼
-FastAPI /api/action (SSE)
+FastAPI /api/game/action (SSE)
     │
     ▼
 LangGraph StateGraph
     │
-    ├─► Router Agent（判断动作类型：对话/动作/脱轨）
+    ├─► Router Agent（判断动作类型：对话/动作/脱轨；Rules 判定已合并进此节点）
     │
-    ├─► Rules Agent（判定成功率，可选D20骰子）
-    │
-    ├─► NPC Agent（加载NPC人设，生成台词）
+    ├─► NPC Agent（加载NPC人设，生成台词；仅"对话且指名 NPC"时走这条边）
     │
     ├─► DM Agent（推演剧情）
     │       │
@@ -94,8 +92,7 @@ app/
 ├── agents/
 │   ├── router.py      ← 新写：LangGraph Router节点
 │   ├── npc.py         ← 新写：NPC Agent
-│   └── rules.py       ← 新写：Rules Agent
-├── dm.py              ← 新写：DM Agent主逻辑
+│   └── dm.py          ← 新写：DM Agent主逻辑
 ├── main.py            ← 新写：FastAPI入口 + SSE
 └── requirements.txt   ← 从AI-Reader-V2 pyproject.toml精简
 ```
@@ -123,12 +120,12 @@ Response: { novel_id, chapters, entities_count }
 
 ### 6.2 玩家动作（SSE流式）
 ```
-POST /api/action
-Request: { novel_id, action: "go_left" | "talk:手电筒" | "free:任意文本" }
+POST /api/game/action
+Request: { session_id, novel_id, action: "任意文本（选项文案或自由输入）" }
 Response: SSE stream
   data: { type: "scene", text: "你走进了黑暗的走廊..." }
   data: { type: "npc", speaker: "守夜人", text: "你谁？" }
-  data: { type: "state", key: "location", value: "走廊" }
+  data: { type: "state", state: { triggered: [...], next_event: {...}, total: N } }
   data: { type: "choices", options: ["往前走", "回头", "用手机照明"] }
   data: { type: "done" }
 ```
@@ -154,6 +151,6 @@ Response: { nodes: [...], links: [...] }
 |------|------|---------|
 | DeepSeek JSON输出不稳定 | Agent解析失败 | 用response_format=json_object，加retry |
 | ChromaDB首次Embedding慢 | 首次加载等待长 | 加loading提示，异步处理 |
-| LangGraph多Agent延迟 | 端到端响应慢 | Router+Rules合并为一个节点，减少到3节点 |
+| LangGraph多Agent延迟 | 端到端响应慢 | **已落地**：Rules 合并进 Router，图收敛为 `router → npc → dm`；且只有"对话且指名 NPC"才绕道 npc 节点 |
 | 小说切片质量 | RAG检索不准 | 用jieba分词+段落级切片 |
 | Agent间数据传递设计 | 状态混乱 | 提前定义AgentState结构体 |

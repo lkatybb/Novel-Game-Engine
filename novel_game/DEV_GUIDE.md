@@ -2,6 +2,16 @@
 
 > 本文档面向开发者（老三），按顺序执行，每步都有验收命令。跑不通就停下问，不要跳步。
 
+## 现状说明（先读这段，再看后面的历史步骤）
+
+本文档记录的是 **Phase 1 建设期**的原始施工步骤，**不是当前状态的描述**。项目已走完 Phase 1 并按任务单完成一轮债务清理，**以下内容与现状不符，以 `README.md` 与 `ARCHITECTURE.md` 为准**：
+
+- `models.py` 中的 `PlayerAction` 已被删除（全文搜索还会命中本文档第 162 行附近的旧代码片段，那是历史记录）。图状态 `AgentState` 现在是 `TypedDict`，字段为 `session_id` / `novel_id` / `player_action`(str) / `action_category` / `target_npc` / `npc_dialogue` / `result`。
+- 动作接口路径是 `POST /api/game/action`（不是 `/api/action`）；另有 `/api/game/start`、`/api/game/resume`、`GET|DELETE /api/game/sessions/...`、`POST /api/novel/upload`、`GET /api/novel/list`、`GET|DELETE /api/novel/{novel_id}`。
+- `agents/rules.py` **从未存在**（Rules 判定已合并进 `agents/router.py`）。
+- 验收测试以 `test_contract.py`（契约）与 `test_tech_debt.py`（全链路回归）为准，`test_lock*.py` / `_tmp_*.py` / `diag*.py` 是开发期诊断脚本。
+- 前端 UI 与「纸感」主题集中在 `static/style.css` + `static/app.js`，关系图是独立的 `graphic/relation.html`（自带样式，不引用 `style.css`）。
+
 ---
 
 ## 前置准备

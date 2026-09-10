@@ -20,7 +20,7 @@
 ```
 e:\小说\novel_game\
 ├── config.py                    # 配置中心（DeepSeek/ChromaDB路径等）
-├── models.py                     # 数据结构定义（GameState/PlayerAction/SceneResponse等）
+├── models.py                     # 数据结构定义（GameState/AgentState）
 ├── requirements.txt              # Python依赖
 ├── .env                          # 环境变量（API Key）
 │
@@ -28,13 +28,13 @@ e:\小说\novel_game\
 │   ├── __init__.py
 │   ├── short_term.py             # 短期记忆：List维护最近5轮对话
 │   ├── long_term.py              # 长期记忆：ChromaDB向量检索
-│   └── global_state.py           # 全局状态：Dict维护位置/物品/flag
+│   ├── global_state.py           # 全局状态：Dict维护位置/物品/flag
+│   └── session_store.py          # 存档：原子写入 + 会话快照
 │
 ├── agents/                       # LangGraph多Agent
 │   ├── __init__.py
 │   ├── graph.py                  # StateGraph定义 + 节点连接
 │   ├── router.py                 # 路由Agent：判断动作类型
-│   ├── rules.py                  # 规则Agent：动作判定+骰子
 │   ├── npc.py                    # NPC Agent：加载人设生成台词
 │   └── dm.py                     # DM Agent：推演剧情主逻辑
 │
@@ -70,33 +70,30 @@ e:\小说\novel_game\
 ```python
 # models.py
 
-class GameState:
+class GameState(BaseModel):
     """全局游戏状态，所有Agent共享"""
+    novel_id: str = ""
+    player_location: str = "起始场景"
+    inventory: list[str] = []
+    flags: dict[str, bool] = {}          # 事件标记（如"已拿钥匙"）
+    val: int = 50                        # 主状态值 0-100（如理性值）
+    hp: int = 100                        # 生命值
+    current_npcs: list[str] = []
+    triggered_events: list[str] = []     # 已触发的关键事件名
+
+class AgentState(TypedDict, total=False):
+    """LangGraph 节点间传递的状态（见 agents/graph.py）"""
+    session_id: str
     novel_id: str
-    player_location: str           # 当前场景
-    inventory: list[str]           # 物品列表
-    flags: dict[str, bool]         # 事件标记（如"已拿钥匙"）
-    val: int                       # 主状态值（0-100，如理性值/好感度）
-    hp: int                        # 生命值（可选）
-    current_npcs: list[str]        # 当前场景NPC
-
-class PlayerAction:
-    """玩家输入"""
-    action_type: str               # "choice" | "free_input"
-    content: str                   # 玩家输入的文本或选项ID
-
-class AgentState:
-    """LangGraph节点间传递的状态"""
-    game_state: GameState
-    player_action: PlayerAction
-    short_term_memory: list[dict]  # 最近5轮对话
-    retrieved_context: str         # ChromaDB检索结果
-    action_category: str           # Router判定：dialog/action/off_rail
-    action_result: str             # Rules判定：success/fail/partial
-    npc_dialogue: str              # NPC Agent生成的台词
-    story_output: str              # DM Agent推演的剧情
-    choices: list[str]             # 返回给玩家的选项
+    player_action: str        # 玩家原始输入（不含 NPC 台词拼接）
+    action_category: str      # Router 判定：dialog/action/off_rail
+    target_npc: str | None    # Router 指出的对话目标
+    npc_dialogue: str         # NPC Agent 产出的台词
+    result: dict              # DM Agent 产出的完整结果（story/choices/state_changes）
 ```
+
+> 用 `TypedDict` 而非 pydantic 模型承载图状态 —— LangGraph 对 `TypedDict` 的增量更新语义最稳定（节点只需返回自己改动的字段）。
+> `game_state` / 短期记忆 / 检索结果**不进图状态**：它们由 `memory` 层按 `session_id` 持有（内存字典 + ChromaDB），图里只传引用与中间产物，避免每步深拷贝大对象。
 
 ### 3.2 SSE响应格式
 

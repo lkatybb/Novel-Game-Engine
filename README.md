@@ -41,7 +41,7 @@
 
 取不到事件清单时放行，避免误杀。实现在 [`global_state.py`](novel_game/memory/global_state.py) 的 `_accept_triggered`。
 
-前端据此渲染"剧情时间线"面板，玩家能看到自己推进到原著的哪一步。
+**对外只暴露「已发生」和「下一个」**：`state` 帧下发 `triggered`（已触发事件名数组）、`next_event`（仅 `event_name` + `order`，无未触发事件时为 `null`）、`total`，前端据此渲染「✓ 已触发」+「灰·下一个」两类；未触发事件的全清单与 `trigger_condition` **一律不下发**。DM Prompt 也遵守同一口径，只注入**当前待触发的这一个**事件（`memory/global_state.py` 的 `get_next_event`）—— 一次性把未触发清单塞进 Prompt，等于把后文剧情提前交给模型。
 
 ### 3. LangGraph 多 Agent 编排
 
@@ -91,6 +91,7 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 ├── AGENTS.md                   # 项目开发铁律（AI 协作约定）
 ├── PRD.md                      # 产品需求
 ├── ARCHITECTURE.md             # 架构方案
+├── TECH_DEBT.md                 # 技术债登记（为什么先不修 + 修的时候要付什么）
 ├── README.md
 ├── trae/rules/AGENTS.md        # 铁律原文（Trae 版）
 ├── .github/agents/             # 5 个自定义 Agent 定义（规划/评审/实现/需求/故障）
@@ -192,6 +193,8 @@ CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 | `POST` | `/api/game/action` | **玩家动作，SSE 流式**，入参 `{session_id, novel_id, action}` |
 | `POST` | `/api/game/resume` | 从存档恢复会话，入参 `{session_id}` |
 | `GET` | `/api/game/sessions/{novel_id}` | 某本小说下的所有存档 |
+| `DELETE` | `/api/game/sessions/{session_id}` | 删除单个存档（清内存状态 + 清快照 + 从书架该条 `sessions` 摘除） |
+| `DELETE` | `/api/novel/{novel_id}` | 删除小说（正文 / 封面 / ChromaDB 集合 / 人物缓存 / 其下所有存档 / 书架条目六处一起清） |
 
 交互式文档：<http://localhost:8000/docs>
 
@@ -268,9 +271,9 @@ python _diag_sse.py
 | F5 | SSE 流式输出 | ✅ 完成 |
 | F6 | 游戏前端 | ✅ 完成（书架 / 游戏 / 菜单 / 场景弹窗） |
 | F7 | 人物关系力导图 | ✅ 完成（D3.js） |
-| F9 | 存档系统 | 🟡 自动存档 + 恢复已做，成就系统未做 |
+| F9 | 存档系统 | 🟡 自动存档 / 恢复 / 删存档 / 删小说已做（`DELETE` 端点），成就系统未做 |
 | F8 | 分支剧情 JSON | ⬜ 未开始 |
-| F10 | 场景氛围特效 | 🟡 约 30% |
+| F10 | 场景氛围特效 | ⬜ 未开始（`style.css` 现有 6 个 `@keyframes` 全是通用 UI 动效 —— 光标 `blink`、翻页 `pagePop`/`pageSink`、`tapBreathe`、卡片 `rise`、状态 `pulse`；**没有**情景驱动的雨滴 / 抖动 / 闪光，`app.js` 中零引用） |
 
 ### 明确不做
 
@@ -293,6 +296,8 @@ data/bookshelf.json        # 书架索引
 ```
 
 **克隆后可直接启动**：`config.py` 会在导入时自动 `mkdir` 重建这些目录，`session_store` 读到缺失的 `bookshelf.json` 会返回空列表。已实测验证：干净克隆 → 依赖安装 → 服务启动 → 上传小说全流程正常。
+
+**孤儿数据注记**：`bookshelf.json` 是唯一索引，磁盘上的文件未必都被它引用 —— 早期手工测试（以及 `DELETE` 端点上线前的删除方式）会留下孤儿文件。实测当前工作区：`data/novels/` 73 个文件里 16 个不在书架条目内（71 个 `.txt` + 2 个封面 `.png`），`data/sessions/` 128 个存档里 56 个不在任何书架条目的 `sessions` 中，`data/character_cache/` 55 个全部有归属。它们**不影响启动与游玩**，只是占空间。要清理请走网页上的「删除小说 / 删除存档」按钮（端点会把 ChromaDB 集合一并删掉），**不要手工删文件**。
 
 要换成自己的小说，只需在网页上上传，或把 TXT 丢进 `novel_game/data/novels/` 后调用 `ingest()`。
 
