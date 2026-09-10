@@ -150,5 +150,5 @@ def format_state(session_id: str) -> str:
     items = ", ".join(s.inventory) if s.inventory else "无"
     flags = ", ".join(s.flags.keys()) if s.flags else "无"
     triggered = ", ".join(s.triggered_events) if s.triggered_events else "（尚未发生任何关键事件）"
-    return (f"当前位置: {s.player_location}\n物品: {items}\n已触发事件: {flags}\n"
-            f"关键事件已发生: {triggered}\n状态值: {s.val}/100\n生命: {s.hp}")
+    return (f"当前位置: {s.player_location}\n物品: {items}\n事件标记: {flags}\n"
+            f"已触发关键事件: {triggered}\n状态值: {s.val}/100\n生命: {s.hp}")
