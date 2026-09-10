@@ -39,11 +39,13 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 # 服务地址：默认 8888（M2/M3 复审位），可用环境变量覆盖，如
 #   $env:CONTRACT_BASE='http://127.0.0.1:8889'
 BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
+ROOT = Path(__file__).resolve().parent
 SAMPLE = Path(__file__).resolve().parent / "data" / "novels" / "西游记-样本.txt"
 
 # SSE 协议白名单 / 必含事件（API 契约，不得静默变化）
@@ -109,6 +111,44 @@ def post_sse(path: str, payload: dict, timeout: int = 300):
         except json.JSONDecodeError:
             continue
     return events, "".join(lines)
+
+
+def get_json(path: str, timeout: int = 60) -> dict:
+    """GET 并解析 JSON"""
+    with urlopen(BASE + path, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def request_json(method: str, path: str, payload: dict | None = None, timeout: int = 300):
+    """任意方法请求，返回 (status_code, body)。
+
+    非 2xx 不抛异常，便于断言状态码（B11/B12 要断言 404）。
+    """
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Content-Type": "application/json"} if data is not None else {}
+    req = Request(BASE + path, data=data, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        raw = e.read().decode("utf-8")
+        try:
+            return e.code, json.loads(raw)
+        except json.JSONDecodeError:
+            return e.code, {"raw": raw}
+
+
+def novel_entry(novel_id: str) -> dict | None:
+    """从书架接口取单本条目（残留断言一律以服务端数据为准，不读本地副本）"""
+    for nv in get_json("/api/novel/list").get("novels", []):
+        if nv["novel_id"] == novel_id:
+            return nv
+    return None
+
+
+def shelf_ids() -> list[str]:
+    """书架上的 novel_id 列表（隔离纪律要求的前后对比）"""
+    return [nv["novel_id"] for nv in get_json("/api/novel/list").get("novels", [])]
 
 
 def upload(path: Path, timeout: int = 600) -> str:
@@ -311,6 +351,34 @@ def check_a11_masking():
     check("A11-2", reason2 != "", f"结构性泄露 → A4 原因 = {reason2!r}")
 
 
+def check_session_delete(novel_id: str, kept_session_id: str):
+    """B9-B12：TU-4 删除存档的零残留、幂等与"不存在即报错"语义。
+
+    隔离纪律：只操作本次运行自己开的 session，绝不 DELETE 测试前已存在的条目。
+    """
+    from config import SESSIONS_DIR
+
+    sid = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))["session_id"]
+    print(f"[INFO] TU-4 另开一条待删存档 session_id={sid}")
+
+    status, body = request_json("DELETE", f"/api/game/sessions/{sid}")
+    check("B9-0", status == 200, f"DELETE 存档 -> HTTP {status}，body = {body}")
+
+    path = SESSIONS_DIR / f"{sid}.json"
+    check("B9", not path.exists(), f"磁盘快照已删除: {path.name}")
+
+    entry = novel_entry(novel_id) or {}
+    sids = [s["session_id"] for s in entry.get("sessions", [])]
+    check("B10", sid not in sids and kept_session_id in sids,
+          f"书架 sessions = {sids}（应含 {kept_session_id}、不含 {sid}）")
+
+    status2, _ = request_json("DELETE", f"/api/game/sessions/{sid}")
+    check("B11", status2 == 404, f"重复 DELETE -> HTTP {status2}（应为 404，不得静默成功）")
+
+    status3, _ = request_json("POST", "/api/game/resume", {"session_id": sid})
+    check("B12", status3 == 404, f"删除后 resume -> HTTP {status3}（应为 404）")
+
+
 def main():
     print("=" * 72)
     print("TU-10a/10d 接口契约测试（SSE / state 协议）")
@@ -325,9 +393,9 @@ def main():
     if not check("PRE-2", wait_server(), f"服务可达: {BASE}"):
         return
 
+    print(f"[INFO] 运行开始 bookshelf = {shelf_ids()}")
     novel_id = json.loads(upload(SAMPLE))["novel_id"]
     print(f"[INFO] 上传完成 novel_id={novel_id}")
-
     # 关键事件清单取自人物缓存文件（A4 需要完整事件名与 order）
     cache_path = (Path(__file__).resolve().parent / "data" / "character_cache"
                   / f"{novel_id}_characters.json")
@@ -394,6 +462,11 @@ def main():
     # ---------- /resume ----------
     resume_data = json.loads(post_json("/api/game/resume", {"session_id": session_id}))
     check_state_contract("A7", resume_data["state"], "/resume", order_map)
+
+    # ================= TU-4：删除存档（B9-B12）=================
+    check_session_delete(novel_id, session_id)
+
+    print(f"[INFO] 运行结束 bookshelf = {shelf_ids()}")
 
     print("-" * 72)
     if failures:

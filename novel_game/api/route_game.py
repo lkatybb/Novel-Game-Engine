@@ -9,14 +9,14 @@ logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from memory.global_state import init_state, get_state, update_state, restore_session
-from memory.short_term import add as add_memory, get as get_memory
+from memory.global_state import init_state, get_state, update_state, restore_session, drop_state
+from memory.short_term import add as add_memory, drop as drop_memory, get as get_memory
 from memory.long_term import retrieve, format_context
 from agents.graph import stream_graph
 from pipeline.prompts import DM_SYSTEM
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
 from memory.session_store import (
-    save_session, load_session,
+    save_session, load_session, delete_session_file, remove_session_from_novel,
     add_session_to_novel, update_session_meta, list_sessions_for_novel,
 )
 
@@ -205,6 +205,25 @@ async def resume_game(req: ResumeRequest):
 async def get_sessions(novel_id: str):
     """获取某本小说下的所有会话"""
     return {"novel_id": novel_id, "sessions": list_sessions_for_novel(novel_id)}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除一条存档：磁盘快照 + 书架记录 + 内存状态。
+
+    会话不存在时返回 404，不静默成功。
+    """
+    snap = load_session(session_id)
+    if not snap:
+        raise HTTPException(status_code=404, detail=f"会话不存在: {session_id}")
+
+    novel_id = snap["novel_id"]
+    delete_session_file(session_id)
+    remove_session_from_novel(novel_id, session_id)
+    drop_state(session_id)
+    drop_memory(session_id)
+
+    return {"deleted": session_id, "novel_id": novel_id}
 
 
 @router.post("/action")

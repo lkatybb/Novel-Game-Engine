@@ -23,6 +23,11 @@ def get(session_id: str) -> list[dict]:
     return list(_memory[session_id])
 
 
+def drop(session_id: str):
+    """丢弃会话的短期记忆（存档被删除时调用；不存在则无操作）"""
+    _memory.pop(session_id, None)
+
+
 def format_memory(session_id: str) -> str:
     """格式化为Prompt可用文本"""
     turns = get(session_id)

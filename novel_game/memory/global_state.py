@@ -39,6 +39,11 @@ def get_state(session_id: str) -> GameState:
     return _states[session_id]
 
 
+def drop_state(session_id: str):
+    """丢弃会话在内存中的状态（存档被删除时调用；不存在则无操作）"""
+    _states.pop(session_id, None)
+
+
 def _as_str_list(value) -> list[str]:
     """LLM 可能返回 str / list / None，统一归一化为去空字符串列表"""
     if value is None:

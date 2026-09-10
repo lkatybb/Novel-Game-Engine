@@ -190,8 +190,43 @@ function showNovelDetail(nv) {
     const item = buildMenuItem(label, '继续阅读');
     item.title = sess.last_action || '继续上次进度';
     item.addEventListener('click', () => resumeGame(sess.session_id, nv.novel_id, nv.title || nv.novel_id));
+    item.appendChild(buildDeleteEntry('删除这条存档', () => deleteSession(nv, sess.session_id)));
     dom.sessionMenuList.appendChild(item);
   }
+}
+
+/** 菜单行右侧的删除入口（用 span 而非 button：按钮不能嵌套按钮） */
+function buildDeleteEntry(title, onDelete) {
+  const del = document.createElement('span');
+  del.className = 'menu-del';
+  del.textContent = '✕';
+  del.title = title;
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();          // 不触发所在行的"继续阅读"
+    onDelete();
+  });
+  return del;
+}
+
+/** 删除一条存档（破坏性操作：confirm 二次确认后才发请求） */
+async function deleteSession(nv, sessionId) {
+  const title = nv.title || nv.novel_id;
+  if (!confirm(`确定删除这条存档？\n\n《${title}》\n存档：${sessionId}\n\n删除后不可恢复。`)) return;
+  try {
+    await api(`/api/game/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+    toast('存档已删除');
+    await reloadNovelDetail(nv.novel_id);
+  } catch (e) {
+    toast(`删除失败：${e.message}`);
+  }
+}
+
+/** 删除后从服务器重新拉书架并回到该书详情页（禁止用本地数组拼状态） */
+async function reloadNovelDetail(novelId) {
+  const data = await api('/api/novel/list');
+  const nv = (data.novels || []).find((n) => n.novel_id === novelId);
+  if (!nv) { showLibrary(); await loadLibrary(); return; }
+  showNovelDetail(nv);
 }
 
 /** 上传小说 → 自动开始新游戏 */

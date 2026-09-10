@@ -17,6 +17,7 @@
   --accent: #2b2823;          /* 主按钮：墨色块 */
   --accent-ink: #f4f1ea;
   --ok: #4a7c59;              /* 已触发事件 */
+  --danger: #b0563f;          /* 破坏性操作（删除） */
   --shadow-lg: 0 24px 60px rgba(43, 40, 35, 0.12);
   --shadow-sm: 0 6px 18px rgba(43, 40, 35, 0.08);
   --font-song: "华文宋体", "STSong", "Songti SC", "Noto Serif CJK SC",
@@ -35,6 +36,7 @@ body[data-color-mode="dark"] {
   --accent: #e8e2d4;
   --accent-ink: #191713;
   --ok: #7db88d;
+  --danger: #d98a72;          /* 破坏性操作（删除），暗色下提亮 */
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
@@ -179,6 +181,14 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
   transition: color 0.2s ease, transform 0.2s ease;
 }
 .menu-item:hover .menu-arrow { color: var(--ink-0); transform: translateX(4px); }
+.menu-item .menu-del {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--font-sans); font-size: 12px; color: var(--ink-2);
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.menu-item .menu-del:hover { color: var(--danger); border-color: var(--danger); }
 .menu-item-strong .menu-label { font-weight: 700; }
 
 /* 书详情页 */
