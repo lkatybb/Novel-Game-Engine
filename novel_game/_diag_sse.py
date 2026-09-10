@@ -40,6 +40,8 @@ for raw in resp.iter_lines(decode_unicode=True):
         print("choices   :", evt.get("options"))
     elif t == "state":
         st = evt.get("state", {})
-        print("state     : location =", st.get("location"), "| timeline =", len(st.get("_timeline", [])))
+        print("state     : location =", st.get("location"),
+              "| triggered =", len(st.get("triggered", [])), "/", st.get("total"),
+              "| next =", st.get("next_event"))
     else:
         print(f"{t:10}:", json.dumps(evt, ensure_ascii=False)[:120])

@@ -638,10 +638,6 @@ body[data-color-mode="dark"] .menu-panel {
   font-family: var(--font-sans); font-size: 11px;
   min-width: 18px;
 }
-.tl-cond {
-  font-family: var(--font-sans); font-size: 11px; color: var(--ink-2);
-  margin-top: 2px;
-}
 
 /* --------------------------------------------------------------------------
    6. Toast 提示

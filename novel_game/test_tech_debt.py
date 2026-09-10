@@ -76,7 +76,7 @@ r = requests.post(BASE + "/api/game/start", json={"novel_id": novel_id})
 check("start 200", r.status_code == 200)
 d = r.json()
 check("choices > 0", len(d.get("choices", [])) > 0)
-check("state 有 _timeline", "_timeline" in d.get("state", {}))
+check("state 有 triggered/total", "triggered" in d.get("state", {}) and "total" in d.get("state", {}))
 session_id = d["session_id"]
 
 # 7. SSE 一轮
