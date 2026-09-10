@@ -81,7 +81,7 @@ def dm_inference(session_id: str, novel_id: str, player_action: str) -> dict:
 def dm_update_memory(session_id: str, player_action: str, result: dict):
     """更新短期记忆、全局状态，并检查硬锁关键事件是否触发"""
     from memory.short_term import add as add_memory
-    from memory.global_state import update_state, trigger_event, get_state
+    from memory.global_state import update_state, trigger_event
 
     add_memory(session_id, {"player": player_action, "dm": result.get("story", "")})
 
@@ -92,23 +92,12 @@ def dm_update_memory(session_id: str, player_action: str, result: dict):
     # === 硬锁事件触发 ===
     triggered_now = set()
 
-    # 方式1（优先）：DM 直接在 state_changes 里返回 triggered_events
-    # （白名单过滤在 global_state 写入入口统一执行，编造事件名不会入库）
+    # 关键事件只认 DM 在 state_changes.triggered_events 里的显式声明（必填字段）
+    # （白名单过滤与 order 顺序闸门在 global_state 写入入口统一执行，编造/跳序事件名不会入库）
     dm_triggered = state_changes.get("triggered_events", []) if isinstance(state_changes, dict) else []
+    logger.info("DM 声明的 triggered_events: %s", dm_triggered)
     for en in dm_triggered:
         triggered_now.add(en)
-
-    # 方式2（兜底）：字符串匹配——当 DM 没返回 triggered_events 时的降级方案
-    if not dm_triggered:
-        try:
-            novel_id = get_state(session_id).novel_id
-            key_events = __import__('pipeline.character_extractor', fromlist=['get_key_events']).get_key_events(novel_id)
-            for evt in key_events:
-                en = evt["event_name"]
-                if en in result.get("story", ""):
-                    triggered_now.add(en)
-        except (ValueError, KeyError, Exception) as e:
-            logger.warning("硬锁事件兜底匹配跳过: %s", e)
 
     for en in triggered_now:
         try:
