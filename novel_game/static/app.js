@@ -193,6 +193,12 @@ function showNovelDetail(nv) {
     item.appendChild(buildDeleteEntry('删除这条存档', () => deleteSession(nv, sess.session_id)));
     dom.sessionMenuList.appendChild(item);
   }
+
+  // 危险操作：删除整本小说（含全部存档与向量库）
+  const delNovel = buildMenuItem('删除这本小说', '不可恢复');
+  delNovel.classList.add('menu-item-danger');
+  delNovel.addEventListener('click', () => deleteNovel(nv));
+  dom.sessionMenuList.appendChild(delNovel);
 }
 
 /** 菜单行右侧的删除入口（用 span 而非 button：按钮不能嵌套按钮） */
@@ -227,6 +233,20 @@ async function reloadNovelDetail(novelId) {
   const nv = (data.novels || []).find((n) => n.novel_id === novelId);
   if (!nv) { showLibrary(); await loadLibrary(); return; }
   showNovelDetail(nv);
+}
+
+/** 删除整本小说（破坏性操作：confirm 二次确认后才发请求） */
+async function deleteNovel(nv) {
+  const title = nv.title || nv.novel_id;
+  if (!confirm(`确定删除《${title}》？\n\n将同时删除这本书的全部存档与向量库，删除后不可恢复。`)) return;
+  try {
+    const data = await api(`/api/novel/${encodeURIComponent(nv.novel_id)}`, { method: 'DELETE' });
+    toast(`已删除《${title}》（连带存档 ${data.sessions_deleted ?? 0} 条）`);
+    showLibrary();
+    await loadLibrary();          // 重新拉服务器书架，不用本地数组拼状态
+  } catch (e) {
+    toast(`删除失败：${e.message}`);
+  }
 }
 
 /** 上传小说 → 自动开始新游戏 */

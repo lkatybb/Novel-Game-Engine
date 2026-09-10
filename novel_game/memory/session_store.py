@@ -110,6 +110,19 @@ def remove_session_from_novel(novel_id: str, session_id: str):
     _write_json(BOOKSHELF_FILE, bookshelf)
 
 
+def remove_novel(novel_id: str) -> dict | None:
+    """从书架删掉一本书，返回被删条目（含 filename / sessions，供调用方清理残留）
+
+    Returns: 被删的书架条目；该书不在书架上时返回 None
+    """
+    bookshelf = _read_json(BOOKSHELF_FILE, [])
+    removed = next((b for b in bookshelf if b["novel_id"] == novel_id), None)
+    if removed is None:
+        return None
+    _write_json(BOOKSHELF_FILE, [b for b in bookshelf if b["novel_id"] != novel_id])
+    return removed
+
+
 # ============ Session 快照 ============
 
 def save_session(session_id: str, novel_id: str, game_state: dict, short_term_memory: list[dict]):

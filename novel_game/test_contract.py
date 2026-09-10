@@ -29,6 +29,13 @@
     A7     /resume 的 state 满足 A5 + A8 口径（TU-1 三挂载点一致性）
     A8     存在未触发事件时 next_event 不得为 null，且是未触发中 order 最小者；
            未触发为空时 next_event 必须为 null
+    B0/B1-B5/B7  TU-5 删小说残留：素材就位、正文、人物缓存、该校全部存档快照、书架、chroma 集合
+    B6a    离线单元：drop_cache / drop_state / short_term.drop 清内存三容器
+    B6b    在线代理：被删小说的 /graph 返回空；被连带删除的存档发 /action 收到 error 帧
+    B2/B13 TU-5 删小说返回 vector_deleted=True；重复删除 404
+    B8     删除后重新上传同一本小说 -> 能入库 + 能开局（并顺手删掉，兼作端到端复验）
+    B9-B12 TU-4 删存档：200 / 快照消失 / 书架不含该 sid 且同书其他存档仍在 / 重复删除 404
+           / 删除后 resume 404
 
 退出码：全部通过 0；任一失败 1（失败项在末尾汇总）
 """
@@ -379,6 +386,119 @@ def check_session_delete(novel_id: str, kept_session_id: str):
     check("B12", status3 == 404, f"删除后 resume -> HTTP {status3}（应为 404）")
 
 
+def collection_names() -> list[str]:
+    """chroma 现存集合名。
+
+    R-3：list_collections() 返回的是 Collection 对象序列，"名字 in 列表"恒为 False，
+    必须取 .name，否则 B7 永远绿。
+    """
+    from pipeline.novel_parser import _get_client
+    return [c.name for c in _get_client().list_collections()]
+
+
+def action_types(session_id: str, novel_id: str, action: str = "我环顾四周，仔细打量眼前的环境。"):
+    """发一个动作并返回 (帧类型, error 消息)。
+
+    R-4：/action 的失败是 HTTP 200 + SSE {'type':'error'} 帧，不能断 HTTP 状态码。
+    """
+    events, _ = post_sse("/api/game/action",
+                         {"session_id": session_id, "novel_id": novel_id, "action": action})
+    types = [e.get("type") for e in events]
+    return types, [e.get("message") for e in events if e.get("type") == "error"]
+
+
+def check_drop_containers(novel_id: str, session_id: str):
+    """B6a：离线单元断言——drop_cache / drop_state / short_term.drop 必须清掉内存条目。
+
+    跨进程读不到服务端的内存，所以在测试进程里塞脏数据再调这三个函数，做真鉴别。
+    """
+    import memory.global_state as global_state
+    import memory.short_term as short_term
+    import pipeline.character_extractor as character_extractor
+
+    character_extractor._cache[novel_id] = {"graph": {"nodes": [], "links": []}}
+    global_state._states[session_id] = "dirty"
+    short_term._memory[session_id] = "dirty"
+    try:
+        character_extractor.drop_cache(novel_id)
+        global_state.drop_state(session_id)
+        short_term.drop(session_id)
+    except AttributeError as e:      # 红灯期：清理函数尚未实现
+        check("B6a", False, f"内存清理函数缺失: {e}")
+        return
+    finally:
+        character_extractor._cache.pop(novel_id, None)
+        global_state._states.pop(session_id, None)
+        short_term._memory.pop(session_id, None)
+    check("B6a",
+          novel_id not in character_extractor._cache
+          and session_id not in global_state._states
+          and session_id not in short_term._memory,
+          "内存三容器（_cache / _states / _memory）均已清除")
+
+
+def check_novel_delete():
+    """B1-B8 + B6a/B6b：TU-5 删除小说的零残留、幂等与"不存在即报错"语义。
+
+    隔离纪律：只上传并删除本次运行自建的小说；不碰测试前已存在的条目，也不动受 git
+    管理的夹具 data/novels/西游记-样本.txt（上传是复制成副本）。
+    """
+    from config import CHARACTER_CACHE_DIR, NOVELS_DIR, SESSIONS_DIR
+
+    novel_id = json.loads(upload(SAMPLE))["novel_id"]
+    sid1 = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))["session_id"]
+    sid2 = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))["session_id"]
+    print(f"[INFO] TU-5 待删小说 novel_id={novel_id}，存档 = {[sid1, sid2]}")
+
+    entry = novel_entry(novel_id) or {}
+    novel_file = NOVELS_DIR / str(entry.get("filename", ""))
+    cache_file = CHARACTER_CACHE_DIR / f"{novel_id}_characters.json"
+    check("B0", novel_file.exists() and len(entry.get("sessions", [])) == 2,
+          f"删除前素材就位: {novel_file.name}，书架存档 {len(entry.get('sessions', []))} 条")
+
+    check_drop_containers(novel_id, sid1)
+
+    status, body = request_json("DELETE", f"/api/novel/{novel_id}")
+    check("B2", status == 200 and body.get("vector_deleted") is True,
+          f"DELETE 小说 -> HTTP {status}，body = {body}（首次删除 vector_deleted 应为 True）")
+
+    check("B1", not novel_file.exists(), f"正文文件已删除: {novel_file.name}")
+    check("B3", not cache_file.exists(), f"人物缓存已删除: {cache_file.name}")
+    snaps = [SESSIONS_DIR / f"{s}.json" for s in (sid1, sid2)]
+    check("B4", not any(p.exists() for p in snaps),
+          f"该书全部存档快照已删除: {[p.name for p in snaps]}")
+    check("B5", novel_entry(novel_id) is None, "书架已无该条目")
+    check("B7", f"{novel_id}_chapters" not in collection_names(),
+          f"chroma 已无 {novel_id}_chapters 集合")
+
+    # B6b：在线行为代理（跨进程只能看行为）
+    graph = get_json(f"/api/novel/{novel_id}/graph")
+    check("B6b-1", not graph.get("nodes") and not graph.get("links"),
+          f"关系图接口返回空: nodes={len(graph.get('nodes', []))}, links={len(graph.get('links', []))}")
+    types, errs = action_types(sid1, novel_id)
+    check("B6b-2", "error" in types,
+          f"被连带删除的存档发 /action -> 帧类型 {types}，error = {errs}")
+
+    # B11 同口径的 404 语义（小说维度）
+    status2, _ = request_json("DELETE", f"/api/novel/{novel_id}")
+    check("B13", status2 == 404, f"重复 DELETE 小说 -> HTTP {status2}（应为 404，不得静默成功）")
+
+
+def check_reupload():
+    """B8：删除后重新上传同一本小说 -> 能入库 + 能开局（残留不阻断）；完成后顺手删掉。"""
+    data = json.loads(upload(SAMPLE))
+    novel_id = data["novel_id"]
+    check("B8-1", bool(novel_id) and data.get("chunk_count", 0) > 0,
+          f"重新上传成功: novel_id={novel_id}, chunk_count={data.get('chunk_count')}")
+
+    start = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
+    check("B8-2", bool(start.get("story") or start.get("choices")),
+          f"重新开局成功: session_id={start.get('session_id')}")
+
+    status, body = request_json("DELETE", f"/api/novel/{novel_id}")
+    check("B8-3", status == 200, f"清理性删除重传小说 -> HTTP {status}，body = {body}")
+
+
 def main():
     print("=" * 72)
     print("TU-10a/10d 接口契约测试（SSE / state 协议）")
@@ -465,6 +585,10 @@ def main():
 
     # ================= TU-4：删除存档（B9-B12）=================
     check_session_delete(novel_id, session_id)
+
+    # ================= TU-5：删除小说（B1-B8 / B6a / B6b）=================
+    check_novel_delete()
+    check_reupload()
 
     print(f"[INFO] 运行结束 bookshelf = {shelf_ids()}")
 

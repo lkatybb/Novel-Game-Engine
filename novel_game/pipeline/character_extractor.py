@@ -3,18 +3,16 @@
 import json
 import logging
 from pathlib import Path
-from config import LLM_MODEL, get_llm_client, DATA_DIR
+from config import LLM_MODEL, get_llm_client, CHARACTER_CACHE_DIR
 
 logger = logging.getLogger(__name__)
-
-_CACHE_DIR = DATA_DIR / "character_cache"
 
 # 内存缓存（优先查），miss 时查磁盘缓存文件
 _cache: dict = {}
 
 
 def _cache_path(novel_id: str) -> Path:
-    return _CACHE_DIR / f"{novel_id}_characters.json"
+    return CHARACTER_CACHE_DIR / f"{novel_id}_characters.json"
 
 
 def _load_from_disk(novel_id: str) -> dict | None:
@@ -28,10 +26,16 @@ def _load_from_disk(novel_id: str) -> dict | None:
 
 
 def _save_to_disk(novel_id: str, data: dict):
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CHARACTER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _cache_path(novel_id).write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def drop_cache(novel_id: str):
+    """删除小说的人物缓存：内存条目 + 磁盘文件（不存在则无操作）"""
+    _cache.pop(novel_id, None)
+    _cache_path(novel_id).unlink(missing_ok=True)
 
 
 def _llm_call(system_prompt: str, user_prompt: str) -> str:

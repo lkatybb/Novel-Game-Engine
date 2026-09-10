@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import chromadb
+from chromadb.errors import NotFoundError
 
 from config import CHROMA_DIR, CHUNK_SIZE, CHUNK_OVERLAP, NOVELS_DIR, get_embedding_function
 from utils import read_text_auto
@@ -127,3 +128,17 @@ def get_collection(novel_id: str) -> chromadb.Collection:
         metadata={"hnsw:space": "cosine"},
         embedding_function=get_embedding_function(),
     )
+
+
+def delete_collection(novel_id: str) -> bool:
+    """删除小说的向量集合（唯一合法的删向量方式）。
+
+    Returns:
+        True  = 集合确实被删除
+        False = 集合本就不存在（幂等，不报错）
+    """
+    try:
+        _get_client().delete_collection(name=f"{novel_id}_chapters")
+        return True
+    except NotFoundError:
+        return False

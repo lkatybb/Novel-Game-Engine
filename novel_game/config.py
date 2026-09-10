@@ -18,6 +18,7 @@ DATA_DIR = BASE_DIR / "data"
 NOVELS_DIR = DATA_DIR / "novels"
 CHROMA_DIR = BASE_DIR / "chroma_db"
 SESSIONS_DIR = DATA_DIR / "sessions"
+CHARACTER_CACHE_DIR = DATA_DIR / "character_cache"
 
 # 确保目录存在
 NOVELS_DIR.mkdir(parents=True, exist_ok=True)

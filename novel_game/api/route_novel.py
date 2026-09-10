@@ -3,12 +3,16 @@
 import logging
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File
-from pipeline.novel_parser import ingest
-from pipeline.character_extractor import extract_characters
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from pipeline.novel_parser import ingest, delete_collection
+from pipeline.character_extractor import extract_characters, drop_cache
 from config import NOVELS_DIR
 from utils import read_text_auto
-from memory.session_store import add_novel, list_novels
+from memory.global_state import drop_state
+from memory.session_store import (
+    add_novel, delete_session_file, get_novel_meta, list_novels, remove_novel,
+)
+from memory.short_term import drop as drop_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/novel", tags=["novel"])
@@ -65,3 +69,35 @@ async def upload_novel(file: UploadFile = File(...)):
 async def get_bookshelf():
     """获取书架列表"""
     return {"novels": list_novels()}
+
+
+@router.delete("/{novel_id}")
+async def delete_novel(novel_id: str):
+    """删除一本小说：正文 + 向量库 + 人物缓存 + 全部存档 + 书架记录 + 内存状态。
+
+    清理范围一律取自 get_novel_meta() 与 config 常量，不拼路径模板。
+    小说不存在时返回 404，不静默成功。
+    """
+    entry = get_novel_meta(novel_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"小说不存在: {novel_id}")
+
+    (NOVELS_DIR / entry["filename"]).unlink(missing_ok=True)
+    vector_deleted = delete_collection(novel_id)
+    drop_cache(novel_id)
+
+    session_ids = [s["session_id"] for s in entry.get("sessions", [])]
+    for sid in session_ids:
+        delete_session_file(sid)
+        drop_state(sid)
+        drop_memory(sid)
+
+    remove_novel(novel_id)
+    logger.info("已删除小说: novel_id=%s, 连带存档 %d 条, 向量集合删除=%s",
+                novel_id, len(session_ids), vector_deleted)
+
+    return {
+        "deleted": novel_id,
+        "vector_deleted": vector_deleted,
+        "sessions_deleted": len(session_ids),
+    }
