@@ -17,6 +17,7 @@
   --accent: #2b2823;          /* 主按钮：墨色块 */
   --accent-ink: #f4f1ea;
   --ok: #4a7c59;              /* 已触发事件 */
+  --warn: #b5893f;            /* 理智度：赭黄 */
   --danger: #b0563f;          /* 破坏性操作（删除） */
   --shadow-lg: 0 24px 60px rgba(43, 40, 35, 0.12);
   --shadow-sm: 0 6px 18px rgba(43, 40, 35, 0.08);
@@ -36,6 +37,7 @@ body[data-color-mode="dark"] {
   --accent: #e8e2d4;
   --accent-ink: #191713;
   --ok: #7db88d;
+  --warn: #d3a860;            /* 理智度，暗色下提亮 */
   --danger: #d98a72;          /* 破坏性操作（删除），暗色下提亮 */
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.3);
@@ -245,6 +247,10 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
   margin-top: 4px; font-size: 17px; letter-spacing: 0.06em;
 }
 .meter { display: flex; align-items: center; gap: 10px; }
+.topbar-stats {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: 22px; flex-wrap: wrap;
+}
 .status-label {
   font-family: var(--font-sans); font-size: 12px; color: var(--ink-1);
 }
@@ -257,6 +263,9 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
   background: var(--ink-0);
   transition: width 0.4s ease;
 }
+.track-mini { width: 64px; }              /* 好感度 / 理智度：窄条，与剧情进度区分 */
+.fill-val { background: var(--ok); }      /* 好感度：青绿 */
+.fill-hp { background: var(--warn); }     /* 理智度：赭黄 */
 .tiny { font-family: var(--font-sans); font-size: 11px; color: var(--ink-2); }
 
 /* 4.2 阅读区：固定高度容器，内容内部滚动（页面框架永不跳动） */

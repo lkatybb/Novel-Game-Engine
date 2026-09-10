@@ -30,6 +30,8 @@ const dom = {
   typingIndicator: $('typingIndicator'),
   choices: $('choices'), freeForm: $('freeForm'), freeInput: $('freeInput'),
   meterFill: $('meterFill'), meterText: $('meterText'),
+  valFill: $('valFill'), valText: $('valText'),
+  hpFill: $('hpFill'), hpText: $('hpText'),
   progressFill: $('progressFill'),
   // 菜单
   menuPanel: $('menuPanel'), menuSummary: $('menuSummary'),
@@ -917,7 +919,7 @@ function renderChoices(options) {
   });
 }
 
-/** 应用后端状态：顶部位置 + 时间线缓存 */
+/** 应用后端状态：顶部位置 + 好感度/理智度 HUD + 时间线缓存 */
 function applyState(state) {
   if (!state) return;
   app.state = state;
@@ -926,6 +928,15 @@ function applyState(state) {
     dom.storyKicker.textContent = '当前位置';
     dom.storyTitleLine.textContent = loc;
   }
+  updateStats(state);
+}
+
+/** 好感度 / 理智度：DM 按人物特质裁决的 0~100 数值（后端 update_state 已钳制） */
+function updateStats(state) {
+  dom.valFill.style.width = `${state.val}%`;
+  dom.valText.textContent = `${state.val}`;
+  dom.hpFill.style.width = `${state.hp}%`;
+  dom.hpText.textContent = `${state.hp}`;
 }
 
 /** 更新进度条（已触发关键事件 / 总事件数） */

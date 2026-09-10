@@ -105,6 +105,7 @@ def update_state(session_id: str, state_changes: dict):
             state.inventory.append(item)
     for flag_name in _as_str_list(state_changes.get("flag")):
         state.flags[flag_name] = True
+    # val / hp 是 DM 按人物特质裁决的两项数值：好感度 / 理智度，钳制在 0~100
     if state_changes.get("val"):
         try:
             state.val = max(0, min(100, state.val + int(state_changes["val"])))
@@ -112,7 +113,7 @@ def update_state(session_id: str, state_changes: dict):
             pass
     if state_changes.get("hp"):
         try:
-            state.hp = max(0, state.hp + int(state_changes["hp"]))
+            state.hp = max(0, min(100, state.hp + int(state_changes["hp"])))
         except (TypeError, ValueError):
             pass
     for en in _accept_triggered(
@@ -173,4 +174,4 @@ def format_state(session_id: str) -> str:
     flags = ", ".join(s.flags.keys()) if s.flags else "无"
     triggered = ", ".join(s.triggered_events) if s.triggered_events else "（尚未发生任何关键事件）"
     return (f"当前位置: {s.player_location}\n物品: {items}\n事件标记: {flags}\n"
-            f"已触发关键事件: {triggered}\n状态值: {s.val}/100\n生命: {s.hp}")
+            f"已触发关键事件: {triggered}\n好感度: {s.val}/100\n理智度: {s.hp}/100")

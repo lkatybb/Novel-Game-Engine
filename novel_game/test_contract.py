@@ -64,9 +64,9 @@ BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 ROOT = Path(__file__).resolve().parent
 
 # 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
-#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11 + B14 + PRE-1~3 + A6 + A1-A5/A8
+#   full   = 默认，行为与引入分层前完全一致：A9/A12/A10/A11 + B14 + PRE-1~3 + A6 + A1-A5/A8
 #            + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
-#   delete = 删除能力快层（迭代替换用）：A9/A10/A11 + B14 + PRE-1~3 + B9-B12/B14e
+#   delete = 删除能力快层（迭代替换用）：A9/A12/A10/A11 + B14 + PRE-1~3 + B9-B12/B14e
 #            + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、/resume 的 A7 与最贵的 B8
 # 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
 SCOPE = os.environ.get("CONTRACT_SCOPE", "full")
@@ -303,6 +303,47 @@ def check_offline_next_event():
         check("A9-2", got is not None, f"order 缺失 → next_event = {got!r}")
     finally:
         ce.get_key_events = original
+
+
+def check_offline_stats():
+    """A12：离线确定性断言——好感度(val) / 理智度(hp) 契约。
+
+    这两项是 DM 按人物特质裁决、被 HUD 直接消费的数值。三层都必须锁死，
+    否则任一环断了都会让 HUD 静默退化成不会动的死表（无任何报错）：
+      A12-1 DM prompt 的 state_changes schema 必须声明 val / hp（否则模型不会回填）
+      A12-2/3 update_state 必须钳制在 0~100（LLM 给 ±99 也不能越界污染存档）
+      A12-4 只给一项时不得误伤另一项
+      A12-5 format_state 必须以「好感度 / 理智度」口径注入 Prompt（NPC 台词据此调整语气）
+    """
+    import memory.global_state as global_state
+    from pipeline.prompts import DM_SYSTEM
+
+    check("A12-1", '"val"' in DM_SYSTEM and '"hp"' in DM_SYSTEM,
+          "DM prompt 的 state_changes schema 声明 val / hp")
+
+    sid = "__stat_contract__"
+    try:
+        global_state.init_state(sid, "x")
+        global_state.update_state(sid, {"val": 100, "hp": 100})
+        st = global_state.get_state(sid)
+        check("A12-2", st.val == 100 and st.hp == 100,
+              f"初始 50/100 加满后钳制在上限：val={st.val} hp={st.hp}")
+
+        global_state.update_state(sid, {"val": -999, "hp": -999})
+        st = global_state.get_state(sid)
+        check("A12-3", st.val == 0 and st.hp == 0,
+              f"大幅扣减后钳制在下限：val={st.val} hp={st.hp}")
+
+        global_state.update_state(sid, {"val": 3})
+        st = global_state.get_state(sid)
+        check("A12-4", st.val == 3 and st.hp == 0,
+              f"单字段更新不影响另一项：val={st.val} hp={st.hp}")
+
+        text = global_state.format_state(sid)
+        check("A12-5", "好感度: 3/100" in text and "理智度: 0/100" in text,
+              f"format_state 注入标签：{text.splitlines()[-2:]}")
+    finally:
+        global_state.drop_state(sid)
 
 
 def check_offline_order_contract():
@@ -749,6 +790,7 @@ def main():
     print("=" * 72)
 
     check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
+    check_offline_stats()           # A12：好感度/理智度离线契约，同样不受服务状态影响
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
     check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响

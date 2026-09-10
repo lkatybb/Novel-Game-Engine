@@ -97,6 +97,18 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 
 ---
 
+### 6. 好感度与理智度
+
+两项数值由 DM（不是单独的裁判 Agent）在推演剧情时顺手裁决，随每回合与 `story` 一起下发：
+
+- **复用既有字段**：`GameState.val`（默认 50）与 `GameState.hp`（默认 100）本就是 state 模型里的字段，此前从未被填充；本次只把它们**定义为好感度 / 理智度**并在 Prompt 里激活，**没有新增任何 state 字段或 SSE 事件**（接口零变更）。
+- **按人物特质裁决**：`DM_SYSTEM` 要求 DM 依据在场人物的性格、立场、忌讳与看重之处（来自原著片段与已有剧情）判断观感变化，并在 `state_changes` 中给出 `val` / `hp`：普通互动 ±1~3、关键抉择 ±4~8、重大转折 ±10，无变化填 0（防抖，不允许凭空涨落）。
+- **口径**：好感度是**全局关系值**（在场人物对玩家的整体观感），理智度是主角自身的精神状态；两者都在 [`memory/global_state.py`](novel_game/memory/global_state.py) 的 `update_state` 里钳制在 0~100。
+- **注入与展示**：`format_state` 以「好感度 / 理智度」注入 DM 与 NPC，NPC 台词会据此调整语气；顶栏 HUD 用两条窄条实时展示（好感＝青绿、理智＝赭黄）。
+- **回归闸门**：`test_contract.py` 的 A12 离线断言锁死「Prompt 声明 → 数值钳制 → 注入标签」三层，防止 Prompt 与 HUD 之间静默脱钩成不会动的死表。
+
+---
+
 ## 项目结构
 
 ```
@@ -292,6 +304,7 @@ python _diag_sse.py
 | F10 | 场景氛围特效 | ⬜ 未开始（`style.css` 现有 6 个 `@keyframes` 全是通用 UI 动效 —— 光标 `blink`、翻页 `pagePop`/`pageSink`、`tapBreathe`、卡片 `rise`、状态 `pulse`；**没有**情景驱动的雨滴 / 抖动 / 闪光，`app.js` 中零引用） |
 | F11 | 角色私聊（只读旁路） | ✅ 完成（独立 `POST /api/game/chat`，不写状态、不落盘、复用 A11 Mask 防剧透口径） |
 | F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
+| F13 | 好感度 / 理智度 | ✅ 完成（激活 `GameState.val` / `hp`：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 实时展示，`[全局状态]` 以新口径注入 DM / NPC） |
 
 ### 明确不做
 
