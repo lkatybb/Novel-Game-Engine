@@ -85,6 +85,18 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 
 ---
 
+### 5. 角色私聊（只读旁路）
+
+菜单里的「私聊角色」让玩家单独找某个角色问话，**不影响剧情推进**：
+
+- **独立 REST 端点** `POST /api/game/chat`，不塞进 `/action` 的 SSE 流（SSE 事件类型一个都不改）。
+- **只读**：不写 `GameState`、不写短期记忆、不触发关键事件、不落快照。私聊前后存档字节不变。
+- **防剧透复用同一套 Mask 口径**：只给「三个自由文本容器（`player_location` / `flags` / `inventory`）+ 已触发事件 + 主角近 5 轮短期记忆」，未触发事件清单、`trigger_condition`、甚至 `next_event` 都**不注入** —— 角色不承担推进主线的责任，它没有理由知道后文。实现在 [`agents/npc.py`](novel_game/agents/npc.py) 的 `build_chat_prompt`。
+- **对话历史不落盘**：由前端持有并随请求回传（最多 6 条 / 单条 ≤ 200 字），服务端不做会话存储，因此不产生新的孤儿数据、也不需要额外的清理链路。
+- 角色没有人设档案时直接返回 404，**不硬编人设**（不兜底）。
+
+---
+
 ## 项目结构
 
 ```
@@ -191,11 +203,13 @@ CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 | `POST` | `/api/novel/upload` | 上传小说（`multipart/form-data`，≤ 10 MB，仅 `.txt` / `.md`） |
 | `GET` | `/api/novel/list` | 书架列表 |
 | `GET` | `/api/novel/{novel_id}/graph` | 人物关系图（`nodes` + `links`） |
+| `GET` | `/api/novel/{novel_id}/character/{name}` | 单个角色档案（性格 / 目标 / 说话风格 / 关键事件 / 原著片段），关系图点击节点时用 |
 | `POST` | `/api/game/start` | 开局，入参 `{novel_id}`，返回 `session_id` + 开场场景 |
 | `POST` | `/api/game/action` | **玩家动作，SSE 流式**，入参 `{session_id, novel_id, action}` |
 | `POST` | `/api/game/resume` | 从存档恢复会话，入参 `{session_id}` |
+| `POST` | `/api/game/chat` | **角色私聊（只读旁路）**，入参 `{session_id, npc_name, message, history?}`，返回 `{npc_name, reply}` |
 | `GET` | `/api/game/sessions/{novel_id}` | 某本小说下的所有存档 |
-| `DELETE` | `/api/game/sessions/{session_id}` | 删除单个存档（清内存状态 + 清快照 + 从书架该条 `sessions` 摘除） |
+| `DELETE` | `/api/game/sessions/{session_id}` | 删除单个存档（清内存状态 + 清快照 + 清会话脉络 + 从书架该条 `sessions` 摘除） |
 | `DELETE` | `/api/novel/{novel_id}` | 删除小说（正文 / 封面 / ChromaDB 集合 / 人物缓存 / 其下所有存档 / 书架条目六处一起清） |
 
 交互式文档：<http://localhost:8000/docs>
@@ -276,6 +290,8 @@ python _diag_sse.py
 | F9 | 存档系统 | 🟡 自动存档 / 恢复 / 删存档 / 删小说已做（`DELETE` 端点），成就系统未做 |
 | F8 | 分支剧情 JSON | ⬜ 未开始 |
 | F10 | 场景氛围特效 | ⬜ 未开始（`style.css` 现有 6 个 `@keyframes` 全是通用 UI 动效 —— 光标 `blink`、翻页 `pagePop`/`pageSink`、`tapBreathe`、卡片 `rise`、状态 `pulse`；**没有**情景驱动的雨滴 / 抖动 / 闪光，`app.js` 中零引用） |
+| F11 | 角色私聊（只读旁路） | ✅ 完成（独立 `POST /api/game/chat`，不写状态、不落盘、复用 A11 Mask 防剧透口径） |
+| F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
 
 ### 明确不做
 
