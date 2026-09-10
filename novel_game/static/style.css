@@ -265,6 +265,7 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
   overflow-y: auto;
   overscroll-behavior: contain;      /* 滚到边界不带动整页 */
   scrollbar-width: thin;
+  scrollbar-gutter: stable;          /* 常驻滚动条槽：分页测高与最终渲染宽度一致 */
 }
 .stream {
   min-height: 100%;
