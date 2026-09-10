@@ -565,6 +565,40 @@ function hardSplit(text, measure, maxH) {
   return out;
 }
 
+/** 孤行页消解：正文不足 2 行的页并进上一页（合并后最多 4 行正文），
+ *  避免「上一页让出回显后，末尾一句被挤成只有 1 行的页」，减少无谓的翻页次数 */
+function mergeOrphanPages(texts, measure, lineH) {
+  const out = [];
+  texts.forEach((t) => {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && measure(t) <= lineH * 1.5 && measure(prev + t) <= lineH * 4) {
+      out[out.length - 1] = prev + t;
+    } else {
+      out.push(t);
+    }
+  });
+  return out;
+}
+
+/** 在切点前找最近的停顿标点（标点留在前页）；太靠前或没有标点则按字符切 */
+function snapToPause(unit, len) {
+  const pause = unit.slice(0, len).search(/[，。！？；、,;.!?](?=[^，。！？；、,;.!?]*$)/);
+  return pause >= len / 2 ? pause + 1 : len;
+}
+
+/** 从 unit 头部取一段补进 cur（连同 cur 不超过 limit 高度），返回可取的字符数；一个字都塞不下返回 0 */
+function takePrefix(unit, cur, measure, limit) {
+  if (!unit || measure(cur + unit.slice(0, 1)) > limit) return 0;
+  let lo = 1;
+  let hi = unit.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (measure(cur + unit.slice(0, mid)) <= limit) lo = mid;
+    else hi = mid - 1;
+  }
+  return snapToPause(unit, lo);
+}
+
 /** 单段独立分页：贪心打包完整句，每页 3 行正文；
  *  extraH（回显块高度）只让该段**首页**让位，且首页保底 2 行，不挤压成单行页 */
 function paginateSeg(seg, extraH = 0) {
@@ -573,11 +607,11 @@ function paginateSeg(seg, extraH = 0) {
   body.textContent = '国';
   const lineH = body.offsetHeight || 44;
   const chromeH = Math.max(0, shell.offsetHeight - lineH);   // 正文以外的固定占高（speaker）
-  const maxH = chromeH + lineH * 3;                          // 每页 3 行正文
+  const maxH = lineH * 3;                                    // 每页 3 行正文
   const firstMaxH = extraH > 0
-    ? Math.max(chromeH + lineH * 2, maxH - extraH)           // 首页让出回显，但不少于 2 行
+    ? Math.max(lineH * 2, maxH - extraH)                     // 首页让出回显，但不少于 2 行
     : maxH;
-  const measure = (s) => { body.textContent = s; return shell.offsetHeight; };
+  const measure = (s) => { body.textContent = s; return shell.offsetHeight - chromeH; };
 
   const units = [];
   splitSentences(seg.text).forEach((s) => {
@@ -597,11 +631,20 @@ function paginateSeg(seg, extraH = 0) {
   units.forEach((u) => {
     const limit = texts.length === 0 ? firstMaxH : maxH;   // 首页限额更小
     const cand = cur + u;
-    if (!cur || measure(cand) <= limit) cur = cand;
-    else { texts.push(cur.trim()); cur = u; }
+    if (!cur || measure(cand) <= limit) { cur = cand; return; }
+    // 本页已满却只有一行：下一句整句装不下，就从下一句头部借字补满本页，
+    // 避免玩家翻到只有 1 行的页（剩余部分顺延到下一页）
+    if (measure(cur) <= lineH * 1.5) {
+      const take = takePrefix(u, cur, measure, limit);
+      texts.push((cur + u.slice(0, take)).trim());
+      cur = u.slice(take);
+      return;
+    }
+    texts.push(cur.trim());
+    cur = u;
   });
   if (cur.trim()) texts.push(cur.trim());
-  return texts.map((text) => ({ kind: seg.kind, speaker: seg.speaker, text }));
+  return mergeOrphanPages(texts, measure, lineH).map((text) => ({ kind: seg.kind, speaker: seg.speaker, text }));
 }
 
 /** 依据当前 segs 重新扁平化分页；已读页（idx 之前）冻结，防止尾部重排扰动已读内容 */
