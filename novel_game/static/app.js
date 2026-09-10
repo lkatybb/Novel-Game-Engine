@@ -341,7 +341,6 @@ async function startGame(novelId, title) {
     app.pendingChoices = Array.isArray(data.choices) ? data.choices : null;
     appendSegment('scene', '', data.story || data.opening || '故事开始了。');
     app.pager.done = true;                // 非流式：内容已齐，播放器自行播完出选项
-    updateProgress();
   } catch (e) {
     toast(`开始失败：${e.message}`);
   }
@@ -948,7 +947,7 @@ function renderChoices(options) {
   });
 }
 
-/** 应用后端状态：顶部位置 + 好感度/理智度 HUD + 时间线缓存 */
+/** 应用后端状态：顶部位置 + 好感度/理智度 HUD + 进度条 */
 function applyState(state) {
   if (!state) return;
   app.state = state;
@@ -958,6 +957,7 @@ function applyState(state) {
     dom.storyTitleLine.textContent = loc;
   }
   updateStats(state);
+  updateProgress();
 }
 
 /** 好感度 / 理智度：DM 按人物特质裁决的 0~100 数值（后端 update_state 已钳制） */
