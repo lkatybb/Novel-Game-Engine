@@ -1,0 +1,306 @@
+# 小说互动游戏引擎
+
+> 把一本小说变成可玩的文字冒险游戏。玩家用选项或自由输入推动剧情，AI 在**原著框架内**实时推演。
+>
+> 技术亮点在后端：**三层 RAG 记忆** + **LangGraph 多 Agent 编排** —— 解决"AI 玩到后面就忘了前面设定"这个工程痛点。
+
+**English**: An engine that turns a novel into a playable text adventure, powered by a three-layer RAG memory pipeline and a LangGraph multi-agent orchestrator. FastAPI + SSE backend, dependency-free vanilla-JS front end.
+
+---
+
+## 这是什么
+
+上传一本 TXT / MD 小说 → 按段落切片、向量化入库 → 生成开场场景 → 玩家输入动作 → AI 流式推演剧情、给出选项、更新角色状态。
+
+关键区别：不是"让 LLM 随便编故事"，而是让 LLM 在**原著切片** + **已发生的关键事件** + **玩家当前状态**三重约束下推演。
+
+---
+
+## 核心设计
+
+### 1. 三层 RAG 记忆
+
+| 层 | 存储 | 作用 | 实现 |
+|---|---|---|---|
+| 短期 | 内存 `deque(maxlen=5)` | 最近 5 轮对话，保证走位连贯 | [`memory/short_term.py`](novel_game/memory/short_term.py) |
+| 长期 | ChromaDB + `bge-base-zh-v1.5` | 按玩家动作**语义检索**最相关的原著段落 | [`memory/long_term.py`](novel_game/memory/long_term.py) |
+| 全局 | 内存 `GameState` | 位置 / 物品 / flag / 状态值 / 已触发事件 | [`memory/global_state.py`](novel_game/memory/global_state.py) |
+
+- 短期记忆用 `deque` 而非 list，溢出自动淘汰，不需要手动裁剪。
+- 长期记忆用**余弦距离**检索 top-5（`RETRIEVAL_TOP_K`），结果拼成 `[原著片段N]` 注入 Prompt。
+- 检索失败时返回空列表并记日志，不阻断本轮推演（[`long_term.py`](novel_game/memory/long_term.py) 的 `retrieve`）。
+
+### 2. 关键事件硬锁
+
+这是项目里最"较真"的一环 —— 防止 LLM 提前剧透、或编造原著里没有的剧情。
+
+小说入库时用 LLM 抽取**关键事件清单**（每条带 `order` 序号）。之后 DM 返回的 `triggered_events` 要过两道闸门才能写进状态：
+
+1. **白名单**：事件名必须在原著预设清单内，LLM 编的名字直接丢弃
+2. **顺序闸门**：只能触发 `order <= 当前最大 order + 1` 的事件，不允许跳序
+
+取不到事件清单时放行，避免误杀。实现在 [`global_state.py`](novel_game/memory/global_state.py) 的 `_accept_triggered`。
+
+前端据此渲染"剧情时间线"面板，玩家能看到自己推进到原著的哪一步。
+
+### 3. LangGraph 多 Agent 编排
+
+```
+START ──► router ──┬── dialog 且指名 NPC ──► npc ──► dm ──► END
+                   └── 其它 ───────────────────────► dm ──► END
+```
+
+| 节点 | 职责 | 代码 |
+|---|---|---|
+| `router` | 判断动作类型（`dialog` / `action` / `off_rail`）+ 识别对话目标 | [`agents/router.py`](novel_game/agents/router.py) |
+| `npc` | 按人设档案生成 NPC 台词 | [`agents/npc.py`](novel_game/agents/npc.py) |
+| `dm` | 主推演：结合三层记忆产出剧情正文 + 选项 + 状态变更 | [`agents/dm.py`](novel_game/agents/dm.py) |
+
+两个设计取舍：
+
+- **没有独立的 Rules 节点。** 初版架构里 Router 和 Rules 是两个节点，实测多一次 LLM 往返延迟明显，合并进 Router 的判定结果（见 [`PRD.md`](PRD.md) 第 8 节风险表）。
+- **条件边省一次调用。** 只有"对话类且指名了 NPC"才绕道 `npc` 节点，其余动作直连 `dm`。
+
+**流式与图不冲突**：`dm` 节点内部用 `get_stream_writer()` 把 LLM 逐 token 的产出实时推出图外，所以走 StateGraph 不会牺牲打字机效果。CLI 和 Web 共用同一张图，行为一致（公开入口 `stream_graph` / `run_graph`）。
+
+### 4. SSE 事件协议
+
+`POST /api/game/action` 返回 `text/event-stream`，事件类型：
+
+| `type` | 载荷 | 用途 |
+|---|---|---|
+| `stage` | `text` | 进度提示（"正在理解你的行动…"） |
+| `scene_change` | `name`, `desc` | 场景切换弹窗（同名场景不弹） |
+| `scene` | `text` | 剧情正文，**逐块增量**送达 |
+| `npc` | `speaker`, `text` | NPC 台词 |
+| `choices` | `options` | 本轮选项 |
+| `state` | `state` | 完整角色状态 + `_timeline` 时间线 |
+| `error` | `message` | 异常信息 |
+| `done` | — | 本轮结束 |
+
+顺序被刻意约束：**场景弹窗 → NPC 台词 → 正文**。NPC 台词在 `graph` 层就先产出，但 SSE 层会暂存它，等场景弹窗发完再补发。
+
+`choices` 为空数组时**如实下发**，由前端自由输入框兜住 —— 不伪造固定选项，避免把 DM 返回异常掩盖成"正常一轮"。
+
+---
+
+## 项目结构
+
+```
+.
+├── AGENTS.md                   # 项目开发铁律（AI 协作约定）
+├── PRD.md                      # 产品需求
+├── ARCHITECTURE.md             # 架构方案
+├── README.md
+├── trae/rules/AGENTS.md        # 铁律原文（Trae 版）
+├── .github/agents/             # 5 个自定义 Agent 定义（规划/评审/实现/需求/故障）
+└── novel_game/
+    ├── config.py               # 配置中心：LLM / ChromaDB / 切片参数 / 共享单例
+    ├── models.py               # GameState / PlayerAction / AgentState
+    ├── utils.py                # 编码自适应读取（UTF-8 → GBK → GB2312 → UTF-16）
+    ├── play.py                 # 命令行版（复用同一张 LangGraph 图）
+    ├── requirements.txt
+    ├── memory/                 # RAG 三层记忆
+    │   ├── short_term.py
+    │   ├── long_term.py
+    │   ├── global_state.py     # 含关键事件硬锁
+    │   └── session_store.py    # 存档：原子写入 + 会话快照
+    ├── agents/                 # LangGraph 多 Agent
+    │   ├── graph.py            # StateGraph 定义 + 条件边
+    │   ├── router.py
+    │   ├── npc.py
+    │   └── dm.py               # 真 token 流式 + 增量 JSON 解析
+    ├── pipeline/               # 小说处理管线
+    │   ├── novel_parser.py     # 切片 + Embedding 入库
+    │   ├── character_extractor.py  # LLM 抽取人物关系 / NPC 人设 / 关键事件
+    │   └── prompts.py          # 所有 Prompt 集中管理
+    ├── api/                    # FastAPI 接口层
+    │   ├── main.py             # 入口 + 静态文件挂载
+    │   ├── route_novel.py      # 上传 / 书架
+    │   ├── route_game.py       # 开局 / 恢复 / 动作（SSE）
+    │   └── route_graph.py      # 人物关系图数据
+    ├── static/                 # 前端：书架 + 游戏界面（原生 JS，无框架）
+    ├── graphic/relation.html   # D3.js 关系力导图（单文件）
+    └── data/                   # 运行时数据（不入库，见下）
+```
+
+分层依赖是单向的：`api` → `agents` → `memory` / `pipeline` → `models` / `config`。
+
+---
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- 能访问 `https://api.deepseek.com`
+- 首次运行会下载中文 Embedding 模型 `BAAI/bge-base-zh-v1.5`（约 400 MB），代码里已预置 `hf-mirror.com` 国内镜像加速
+
+### 1. 安装依赖
+
+```bash
+cd novel_game
+pip install -r requirements.txt
+```
+
+安装慢的话加镜像：
+
+```bash
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+### 2. 配置 API Key
+
+在 `novel_game/` 下新建 `.env`：
+
+```ini
+LLM_API_KEY=sk-你的DeepSeek密钥
+```
+
+其余配置都有安全默认值，不填也能跑。
+
+### 3. 启动
+
+```bash
+cd novel_game
+uvicorn api.main:app --reload --port 8000
+```
+
+浏览器打开 <http://localhost:8000> → 上传小说（或从书架选）→ 开玩。
+
+想先快速验证链路，仓库自带一本测试小说 [`novel_game/data/novels/西游记-样本.txt`](novel_game/data/novels/西游记-样本.txt)，上传它即可。
+
+### 4. 命令行模式
+
+```bash
+cd novel_game
+python play.py
+```
+
+CLI 走的是同一张 LangGraph 图，行为和网页端一致。
+
+---
+
+## API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/novel/upload` | 上传小说（`multipart/form-data`，≤ 10 MB，仅 `.txt` / `.md`） |
+| `GET` | `/api/novel/list` | 书架列表 |
+| `GET` | `/api/novel/{novel_id}/graph` | 人物关系图（`nodes` + `links`） |
+| `POST` | `/api/game/start` | 开局，入参 `{novel_id}`，返回 `session_id` + 开场场景 |
+| `POST` | `/api/game/action` | **玩家动作，SSE 流式**，入参 `{session_id, novel_id, action}` |
+| `POST` | `/api/game/resume` | 从存档恢复会话，入参 `{session_id}` |
+| `GET` | `/api/game/sessions/{novel_id}` | 某本小说下的所有存档 |
+
+交互式文档：<http://localhost:8000/docs>
+
+角色状态每次动作后**自动存档**（`session_store.save_session`，先写临时文件再 `os.replace` 原子替换，避免中途崩溃写坏 JSON）。
+
+---
+
+## 配置项
+
+全部通过环境变量 / `.env` 覆盖，定义在 [`config.py`](novel_game/config.py)：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `LLM_API_KEY` | *(空)* | DeepSeek API Key，**必填** |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI 兼容端点 |
+| `LLM_MODEL` | `deepseek-chat` | 模型名 |
+| `LLM_MAX_TOKENS` | `16384` | 单次生成上限 |
+| `EMBEDDING_MODEL` | `BAAI/bge-base-zh-v1.5` | 中文向量模型 |
+| `HF_ENDPOINT` | `https://hf-mirror.com` | HuggingFace 镜像（`setdefault`，可覆盖） |
+
+代码内常量：`RETRIEVAL_TOP_K=5`、`SHORT_TERM_LIMIT=5`、`CHUNK_SIZE=800`、`CHUNK_OVERLAP=100`。
+
+LLM 客户端是**进程级单例**，带 `timeout=60s` 和 `max_retries=2`（SDK 内置对 429 / 5xx 指数退避），避免 API 挂起导致请求永久阻塞。
+
+---
+
+## 测试
+
+仓库自带验收脚本，分两类。**全部都要在 `novel_game/` 目录下执行**，且依赖测试小说 [`data/novels/西游记-样本.txt`](novel_game/data/novels/西游记-样本.txt)（已随仓库提供）。
+
+#### 一、直接调 Python（不用启服务）
+
+需要配好 `LLM_API_KEY`，首次运行会下载 Embedding 模型。特点是绕过 HTTP，直接验证 agent 与记忆层：
+
+```bash
+python test_lock.py    # 硬锁：玩家试图跳过原著关键事件，看白名单+顺序闸门是否拦住
+python test_lock2.py
+python test_lock3.py
+python test_lock4.py
+python test_lock5.py   # 检查 DM 返回的 story/flag 里是否泄漏关键事件名
+```
+
+#### 二、打 HTTP 接口（需先启服务）
+
+⚠️ 注意脚本里写死了端口，且**两批脚本端口不一致**：
+
+```bash
+# ——— 端口 8000 ———
+uvicorn api.main:app --port 8000
+python test_api.py        # 主链路：上传 / 开局 / 动作 SSE
+python test_upload.py     # 上传接口边界（大小 / 类型 / 空文件）
+python diag.py
+
+# ——— 端口 8888 ———
+uvicorn api.main:app --port 8888
+python test_tech_debt.py  # 全链路验收
+python test_shelf.py      # 书架 + 自动存档 + 恢复
+python test_timeline.py   # 关键事件时间线
+python _diag_sse.py
+```
+
+`_tmp_*.py` / `_tmp_*.js` / `diag2.py` 是开发期留下的临时诊断脚本，保留在此作为调试参考，不属于正式用例。
+
+---
+
+## 当前状态
+
+| 编号 | 功能 | 状态 |
+|---|---|---|
+| F1 | 小说解析入库 | ✅ 完成 |
+| F2 | RAG 三层记忆 | ✅ 完成 |
+| F3 | DM Agent | ✅ 完成（真 token 流式） |
+| F4 | 多 Agent 协作 | ✅ 完成（LangGraph 条件路由） |
+| F5 | SSE 流式输出 | ✅ 完成 |
+| F6 | 游戏前端 | ✅ 完成（书架 / 游戏 / 菜单 / 场景弹窗） |
+| F7 | 人物关系力导图 | ✅ 完成（D3.js） |
+| F9 | 存档系统 | 🟡 自动存档 + 恢复已做，成就系统未做 |
+| F8 | 分支剧情 JSON | ⬜ 未开始 |
+| F10 | 场景氛围特效 | 🟡 约 30% |
+
+### 明确不做
+
+- 多人在线 / 账号系统
+- MySQL 持久化（所有状态在内存 + ChromaDB + JSON 快照）
+- React 前端（单页原生 JS 足够）
+- 百万字长篇支持（先跑通 3000 字级短篇）
+
+---
+
+## 关于仓库里的数据文件
+
+`novel_game/data/` 下的**运行时数据不入库**，因为它们由用户上传的小说派生而来：
+
+```
+data/novels/*              # 上传的小说正文与封面（第三方版权），仅保留测试样本
+data/sessions/*.json       # 会话快照，含 AI 生成的剧情正文
+data/character_cache/*     # 从小说原文提取的人物关系 / 关键事件
+data/bookshelf.json        # 书架索引
+```
+
+**克隆后可直接启动**：`config.py` 会在导入时自动 `mkdir` 重建这些目录，`session_store` 读到缺失的 `bookshelf.json` 会返回空列表。已实测验证：干净克隆 → 依赖安装 → 服务启动 → 上传小说全流程正常。
+
+要换成自己的小说，只需在网页上上传，或把 TXT 丢进 `novel_game/data/novels/` 后调用 `ingest()`。
+
+---
+
+## 相关文档
+
+- [`PRD.md`](PRD.md) — 产品定位、功能清单、数据流、风险点
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — 技术选型、模块划分、核心数据结构
+- [`novel_game/DEV_GUIDE.md`](novel_game/DEV_GUIDE.md) — 分阶段开发执行手册（含每步验收命令）
+- [`AGENTS.md`](AGENTS.md) — 项目开发铁律
