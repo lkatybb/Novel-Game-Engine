@@ -950,7 +950,10 @@ dom.timelineBtn.addEventListener('click', () => {
 });
 dom.statusBtn.addEventListener('click', () => {
   dom.statusPanel.hidden = !dom.statusPanel.hidden;
-  if (!dom.statusPanel.hidden) dom.timelinePanel.hidden = true;
+  if (!dom.statusPanel.hidden) {
+    renderStatus();                       // 展开前刷新，避免显示过期行囊/见闻
+    dom.timelinePanel.hidden = true;
+  }
 });
 dom.graphBtn.addEventListener('click', () => {
   if (!app.novelId) { toast('请先开始一个故事'); return; }
