@@ -562,14 +562,19 @@ function hardSplit(text, measure, maxH) {
   return out;
 }
 
-/** 单段独立分页：贪心打包完整句，每页约 2-3 行；extraH 为首页需让出的高度（echo 回显） */
+/** 单段独立分页：贪心打包完整句，每页 3 行正文；
+ *  extraH（回显块高度）只让该段**首页**让位，且首页保底 2 行，不挤压成单行页 */
 function paginateSeg(seg, extraH = 0) {
   const body = getProbe(seg.kind, seg.speaker);
+  const shell = body.parentNode;                    // .block：含 speaker 标签的整块
   body.textContent = '国';
   const lineH = body.offsetHeight || 44;
-  // 3 行 + 容差，首页让出 echo 高度；maxH 至少保 1 行，防超长回显压成单字页
-  const maxH = Math.max(lineH * 1.3, lineH * 3 + lineH * 0.45 - extraH);
-  const measure = (s) => { body.textContent = s; return body.parentNode.offsetHeight; };
+  const chromeH = Math.max(0, shell.offsetHeight - lineH);   // 正文以外的固定占高（speaker）
+  const maxH = chromeH + lineH * 3;                          // 每页 3 行正文
+  const firstMaxH = extraH > 0
+    ? Math.max(chromeH + lineH * 2, maxH - extraH)           // 首页让出回显，但不少于 2 行
+    : maxH;
+  const measure = (s) => { body.textContent = s; return shell.offsetHeight; };
 
   const units = [];
   splitSentences(seg.text).forEach((s) => {
@@ -587,8 +592,9 @@ function paginateSeg(seg, extraH = 0) {
   const texts = [];
   let cur = '';
   units.forEach((u) => {
+    const limit = texts.length === 0 ? firstMaxH : maxH;   // 首页限额更小
     const cand = cur + u;
-    if (!cur || measure(cand) <= maxH) cur = cand;
+    if (!cur || measure(cand) <= limit) cur = cand;
     else { texts.push(cur.trim()); cur = u; }
   });
   if (cur.trim()) texts.push(cur.trim());
