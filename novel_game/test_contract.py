@@ -21,9 +21,11 @@
            （不依赖服务，故先于网络检查执行）
     A10    离线确定性断言：关键事件 order 在提取出口归一化为稠密 1..N，
            且归一化后的清单能通过硬锁门槛
-    A11    离线三向断言：DM 自由文本容器命中事件名 → A4 必须通过（Mask 生效）；
+    A11    离线四向断言：DM 自由文本容器命中事件名 → A4 必须通过（Mask 生效）；
            结构性字段泄露未触发事件名 → A4 必须失败（鉴别力保留）；
-           DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）
+           DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）；
+           角色私聊 prompt 一个未触发事件名都不许出现、不下发 trigger_condition，
+           但三个自由文本容器与已触发事件照旧可用（与 A11-1 同源的 Mask 口径）
     PRE-1  测试样本文件存在
     PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
@@ -357,6 +359,8 @@ def check_a11_masking():
       A11-2 再往结构面塞一个未触发事件名 → A4 必须失败（鉴别力保留）
       A11-3 DM prompt 只许出现 1 个未触发事件名，且不下发 trigger_condition
             （防剧透：旧实现一次塞 8 条未触发事件 + 触发条件）
+      A11-4 角色私聊 prompt 一个未触发事件名都不许出现（N4），且不下发 trigger_condition，
+            同时三个自由文本容器照旧可用——与 A11-1 的 Mask 口径同源
     """
     order_map = {"石猴出世": 1, "发现水帘洞": 2, "称美猴王": 3, "拜师菩提": 4}
     base = {"triggered": ["石猴出世"],
@@ -377,8 +381,9 @@ def check_a11_masking():
     reason2, _ = convergence_reason(leaky, order_map)
     check("A11-2", reason2 != "", f"结构性泄露 → A4 原因 = {reason2!r}")
 
-    # A11-3：直调 _build_prompt，数 DM prompt 里泄露了几个未触发事件名
+    # A11-3/A11-4：直调 _build_prompt / build_chat_prompt，数各自泄露了几个未触发事件名
     import agents.dm as dm
+    import agents.npc as npc
     import memory.global_state as global_state
 
     probe = "a11-prompt-probe"
@@ -386,22 +391,45 @@ def check_a11_masking():
               for n, o in order_map.items()]
     original_key_events = global_state.get_key_events
     original_retrieve, original_format_context = dm.retrieve, dm.format_context
+    original_profile = npc.get_npc_profile
     try:
         global_state.get_key_events = lambda novel_id: events
         dm.retrieve = lambda novel_id, query: []      # 避开 ChromaDB 检索
         dm.format_context = lambda retrieved: "（无）"
+        npc.get_npc_profile = lambda novel_id, name: {
+            "personality": "老成持重", "secret": "暗藏杀机",
+            "speech_style": "慢条斯理", "goal": "收个可造之材",
+        }
         global_state.init_state(probe, "a11-novel")
         global_state.update_state(probe, {"triggered_events": ["石猴出世"]})
         prompt = dm._build_prompt(probe, "a11-novel", "我环顾四周")
+
+        # 私聊 prompt：容器里放可识别的值，验证口径与 A11-1 同源（容器可用、未触发事件不给）
+        st = global_state.get_state(probe)
+        st.player_location = "花果山"
+        st.inventory = ["桃子"]
+        st.flags = {"见过祖师": True}
+        chat_prompt = npc.build_chat_prompt("a11-novel", probe, "菩提祖师", "后来你会收谁为徒？")
     finally:
         global_state.get_key_events = original_key_events
         dm.retrieve, dm.format_context = original_retrieve, original_format_context
+        npc.get_npc_profile = original_profile
 
     untriggered = [n for n in order_map if n != "石猴出世"]
     leaked = sorted(n for n in untriggered if n in prompt)
     conditions = sorted(f"触发条件{o}" for o in order_map.values() if f"触发条件{o}" in prompt)
     check("A11-3", leaked == ["发现水帘洞"] and not conditions,
           f"DM prompt 未触发事件名 = {leaked}（应恰好 1 个）；trigger_condition 泄露 = {conditions}")
+
+    chat_leaked = sorted(n for n in untriggered if n in chat_prompt)
+    chat_conditions = sorted(f"触发条件{o}" for o in order_map.values()
+                             if f"触发条件{o}" in chat_prompt)
+    containers_kept = all(v in chat_prompt for v in ("花果山", "桃子", "见过祖师", "石猴出世"))
+    check("A11-4",
+          not chat_leaked and not chat_conditions
+          and "下一个必须发生的关键事件" not in chat_prompt and containers_kept,
+          f"私聊 prompt 未触发事件名 = {chat_leaked}（应为空）；trigger_condition 泄露 = "
+          f"{chat_conditions}；已发生剧情/容器注入 = {containers_kept}")
 
 
 def check_session_memory():

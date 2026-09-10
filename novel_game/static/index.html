@@ -105,6 +105,7 @@
         <button class="text-btn primary" id="resumeBtn">返回游戏</button>
         <button class="text-btn" id="timelineBtn">剧情时间线</button>
         <button class="text-btn" id="statusBtn">行囊见闻</button>
+        <button class="text-btn" id="chatBtn">私聊角色</button>
         <button class="text-btn" id="graphBtn">人物关系图</button>
         <button class="text-btn" id="homeBtn">返回书架</button>
         <button class="text-btn" id="restartBtn">开始新游戏</button>
@@ -122,6 +123,16 @@
         <div class="chip-list" id="inventoryList"></div>
         <h3 class="status-h">见闻</h3>
         <div class="chip-list" id="flagsList"></div>
+      </div>
+      <div class="chat-panel" id="chatPanel" hidden>
+        <h3 class="status-h">私聊</h3>
+        <select class="chat-select" id="chatNpcSelect"></select>
+        <div class="chat-log" id="chatLog"></div>
+        <form class="chat-form" id="chatForm">
+          <input id="chatInput" placeholder="说点什么…" autocomplete="off">
+          <button class="text-btn primary" id="chatSend" type="submit">发送</button>
+        </form>
+        <p class="chat-hint">角色只知道自己经历的剧情，不会剧透后文</p>
       </div>
     </div>
   </section>

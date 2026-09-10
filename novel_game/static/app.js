@@ -35,6 +35,8 @@ const dom = {
   menuPanel: $('menuPanel'), menuSummary: $('menuSummary'),
   timelinePanel: $('timelinePanel'), timelineList: $('timelineList'),
   statusPanel: $('statusPanel'), inventoryList: $('inventoryList'), flagsList: $('flagsList'),
+  chatBtn: $('chatBtn'), chatPanel: $('chatPanel'), chatNpcSelect: $('chatNpcSelect'),
+  chatLog: $('chatLog'), chatForm: $('chatForm'), chatInput: $('chatInput'), chatSend: $('chatSend'),
   resumeBtn: $('resumeBtn'), timelineBtn: $('timelineBtn'), statusBtn: $('statusBtn'),
   graphBtn: $('graphBtn'), homeBtn: $('homeBtn'), restartBtn: $('restartBtn'),
   backBtn: $('backBtn'), menuBtn: $('menuBtn'),
@@ -55,6 +57,8 @@ const app = {
   pendingChoices: null,    // SSE 提前到达的选项，末页播完才渲染
   pager: null,             // 分页播放器状态（beginTurn 创建）
   sceneModalOpen: false,   // 场景弹窗打开时屏蔽翻页点击
+  chat: { npc: '', busy: false, logs: {} },  // 私聊记录只在前端：服务端只读，不落盘
+  chatRoster: null,        // 本作可私聊角色名（首次打开时拉取）
 };
 
 /* --------------------------------------------------------------------------
@@ -287,6 +291,7 @@ function enterGame(title) {
 /** 回到书架 */
 function goHome() {
   closeMenu();
+  resetChat();
   dom.app.hidden = true;
   dom.launcher.hidden = false;
   app.sessionId = null;
@@ -327,6 +332,7 @@ async function startGame(novelId, title) {
     });
     app.novelId = novelId;
     app.sessionId = data.session_id;
+    resetChat();                          // 换会话：私聊面板与角色列表重来
     enterGame(title);
     applyState(data.state);
     beginTurn({ scene: data.scene || null });
@@ -348,6 +354,7 @@ async function resumeGame(sessionId, novelId, title) {
     });
     app.novelId = novelId;
     app.sessionId = data.session_id;
+    resetChat();                          // 换会话：私聊面板与角色列表重来
     enterGame(title || data.novel_id);
     applyState(data.state);
     beginTurn({ scene: null });            // 恢复存档不弹场景窗
@@ -898,6 +905,7 @@ function openMenu() {
     : '当前没有正在运行的故事。';
   renderTimeline();
   dom.timelinePanel.hidden = true;
+  dom.chatPanel.hidden = true;
   dom.menuPanel.classList.remove('is-hidden');
 }
 
@@ -977,6 +985,120 @@ function renderStatus() {
 }
 
 /* --------------------------------------------------------------------------
+ * 5b. 角色私聊（只读旁路问答：不推进剧情、不改状态）
+ * -------------------------------------------------------------------------- */
+
+/** 本作可私聊的角色（关系图节点去掉主角），结果缓存一次 */
+async function loadChatRoster() {
+  if (app.chatRoster) return app.chatRoster;
+  const data = await api(`/api/novel/${encodeURIComponent(app.novelId)}/graph`);
+  // 主角由玩家自己扮演，不作为私聊对象；按戏份权重排序（次要角色排后面）
+  const nodes = (data.nodes || []).filter((n) => n.group !== '主角' && n.id);
+  nodes.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  app.chatRoster = nodes.map((n) => n.id);
+  return app.chatRoster;
+}
+
+function chatHintEl(text) {
+  const el = document.createElement('div');
+  el.className = 'chat-empty';
+  el.textContent = text;
+  return el;
+}
+
+function chatBubble(role, text) {
+  const el = document.createElement('div');
+  el.className = `chat-msg ${role === 'user' ? 'me' : 'npc'}`;
+  el.textContent = text;                    // textContent 防注入
+  return el;
+}
+
+/** 重置私聊面板（切会话时调用，避免串台） */
+function resetChat() {
+  app.chat = { npc: '', busy: false, logs: {} };
+  app.chatRoster = null;
+  dom.chatNpcSelect.replaceChildren();
+  dom.chatLog.replaceChildren();
+  dom.chatInput.value = '';
+  dom.chatPanel.hidden = true;
+}
+
+function renderChatLog() {
+  const logs = app.chat.logs[app.chat.npc] || [];
+  dom.chatLog.replaceChildren();
+  if (!logs.length) {
+    dom.chatLog.appendChild(chatHintEl(`和${app.chat.npc || '角色'}私下说点什么吧（只是聊天，不影响剧情）`));
+    return;
+  }
+  logs.forEach((m) => dom.chatLog.appendChild(chatBubble(m.role, m.content)));
+  dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
+}
+
+/** 开合私聊面板（首次展开时拉角色列表） */
+async function toggleChatPanel() {
+  if (!app.sessionId) { toast('请先开始一个故事'); return; }
+  if (!dom.chatPanel.hidden) { dom.chatPanel.hidden = true; return; }
+
+  dom.timelinePanel.hidden = true;
+  dom.statusPanel.hidden = true;
+  dom.chatPanel.hidden = false;
+
+  if (!dom.chatNpcSelect.options.length) {
+    let roster = [];
+    try {
+      roster = await loadChatRoster();
+    } catch (e) {
+      dom.chatLog.replaceChildren(chatHintEl(`角色列表加载失败：${e.message}`));
+      return;
+    }
+    if (!roster.length) {
+      dom.chatLog.replaceChildren(chatHintEl('本作没有可私聊的角色'));
+      return;
+    }
+    roster.forEach((name) => dom.chatNpcSelect.appendChild(new Option(name, name)));
+    app.chat.npc = roster.includes(app.chat.npc) ? app.chat.npc : roster[0];
+    dom.chatNpcSelect.value = app.chat.npc;
+  }
+  renderChatLog();
+  dom.chatInput.focus();
+}
+
+/** 发一句私聊，拿到角色回话（服务端只读，历史由前端带回） */
+async function sendChat(text) {
+  const msg = text.trim();
+  if (!msg || app.chat.busy || !app.chat.npc) return;
+
+  app.chat.busy = true;
+  dom.chatSend.disabled = true;
+  const logs = app.chat.logs[app.chat.npc] || (app.chat.logs[app.chat.npc] = []);
+  logs.push({ role: 'user', content: msg });
+  renderChatLog();
+  const pending = chatBubble('npc', '……');
+  dom.chatLog.appendChild(pending);
+  dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
+
+  try {
+    const data = await api('/api/game/chat', {
+      method: 'POST',
+      body: {
+        session_id: app.sessionId,
+        npc_name: app.chat.npc,
+        message: msg,
+        history: logs.slice(-6),           // 近 3 个来回，仅用于延续对话
+      },
+    });
+    logs.push({ role: 'assistant', content: data.reply || '（对方没有答话）' });
+  } catch (e) {
+    toast(e.message);                      // 失败：不留空的回话记录，玩家的话仍在面板上
+  } finally {
+    app.chat.busy = false;
+    dom.chatSend.disabled = false;
+  }
+  renderChatLog();
+  dom.chatInput.focus();
+}
+
+/* --------------------------------------------------------------------------
  * 6. 事件绑定（入口）
  * -------------------------------------------------------------------------- */
 
@@ -1000,14 +1122,30 @@ dom.homeBtn.addEventListener('click', goHome);
 dom.backBtn.addEventListener('click', () => toast('剧情回溯暂不支持，可用存档恢复早期进度'));
 dom.timelineBtn.addEventListener('click', () => {
   dom.timelinePanel.hidden = !dom.timelinePanel.hidden;
-  if (!dom.timelinePanel.hidden) dom.statusPanel.hidden = true;
+  if (!dom.timelinePanel.hidden) {
+    dom.statusPanel.hidden = true;
+    dom.chatPanel.hidden = true;
+  }
 });
 dom.statusBtn.addEventListener('click', () => {
   dom.statusPanel.hidden = !dom.statusPanel.hidden;
   if (!dom.statusPanel.hidden) {
     renderStatus();                       // 展开前刷新，避免显示过期行囊/见闻
     dom.timelinePanel.hidden = true;
+    dom.chatPanel.hidden = true;
   }
+});
+dom.chatBtn.addEventListener('click', toggleChatPanel);
+dom.chatNpcSelect.addEventListener('change', () => {
+  app.chat.npc = dom.chatNpcSelect.value;
+  renderChatLog();
+  dom.chatInput.focus();
+});
+dom.chatForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = dom.chatInput.value;
+  dom.chatInput.value = '';
+  sendChat(text);
 });
 dom.graphBtn.addEventListener('click', () => {
   if (!app.novelId) { toast('请先开始一个故事'); return; }

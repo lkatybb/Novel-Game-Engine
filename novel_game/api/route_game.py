@@ -14,6 +14,7 @@ from memory.short_term import add as add_memory, drop as drop_memory, get as get
 from memory.session_memory import drop as drop_session_memory
 from memory.long_term import retrieve, format_context
 from agents.graph import stream_graph
+from agents.npc import chat as npc_chat
 from pipeline.prompts import DM_SYSTEM
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
 from memory.session_store import (
@@ -81,6 +82,13 @@ class ActionRequest(BaseModel):
     session_id: str
     novel_id: str
     action: str
+
+
+class ChatRequest(BaseModel):
+    session_id: str
+    npc_name: str
+    message: str
+    history: list[dict] | None = None   # 近几轮私聊，由前端持有并回传（服务端不落盘）
 
 
 @router.post("/start")
@@ -200,6 +208,39 @@ async def resume_game(req: ResumeRequest):
         "choices": choices,
         "state": _enrich_state(state, novel_id),
     }
+
+
+@router.post("/chat")
+async def npc_chat_with_player(req: ChatRequest):
+    """AI 角色私聊（只读、非 SSE）：以角色身份回一句话。
+
+    纯旁路问答——不写全局状态、不写短期记忆、不触发关键事件、不产生快照，
+    因此不会推进剧情，也不会改变存档。对话记录由前端持有并回传。
+    服务重启后内存状态为空时按磁盘快照自愈（内容与快照一致，不产生新落盘）。
+    """
+    try:
+        _ensure_state(req.session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="说话内容不能为空")
+
+    novel_id = get_state(req.session_id).novel_id
+    try:
+        reply = npc_chat(novel_id, req.session_id, req.npc_name, message, req.history)
+    except ValueError as e:
+        # 人设档案缺失：明确告诉前端这个角色不能私聊，不硬编一个人设出来
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("角色私聊失败: session_id=%s npc=%s", req.session_id, req.npc_name)
+        raise HTTPException(
+            status_code=502,
+            detail=f"角色回话失败（{type(e).__name__}），请检查网络或稍后重试",
+        )
+
+    return {"npc_name": req.npc_name, "reply": reply}
 
 
 @router.get("/sessions/{novel_id}")
