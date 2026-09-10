@@ -119,6 +119,59 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; }   /* 夜读下�
 }
 
 /* --------------------------------------------------------------------------
+   2.2 情景氛围特效：由场景名称/描述判定，app.js 写入 body[data-scene-fx]
+   全部是合成层 transform 动画（GPU 合成，不触发布局/重绘），pointer-events:none 不挡交互；
+   body 上没有该属性时下面所有规则都不生效，因此静景回合零动画开销
+   -------------------------------------------------------------------------- */
+.fx {
+  position: fixed; inset: 0; z-index: 2;
+  pointer-events: none; overflow: hidden;
+  opacity: 0; transition: opacity 0.6s ease;
+}
+body[data-scene-fx="rain"] .fx { opacity: 0.5; }
+body[data-color-mode="dark"][data-scene-fx="rain"] .fx { opacity: 0.32; }
+
+/* 斜雨丝：两层不同疏密与速度，形成纵深；元素四周外扩 30%，
+   位移取各自条纹周期的整数倍，故循环衔接处无可见跳变 */
+body[data-scene-fx="rain"] .fx::before,
+body[data-scene-fx="rain"] .fx::after {
+  content: ''; position: absolute; inset: -30%;
+}
+/* 远处细雨：细密、慢 */
+body[data-scene-fx="rain"] .fx::before {
+  background-image: repeating-linear-gradient(0deg,
+    transparent 0 7px, rgba(92, 112, 132, 0.16) 7px 8px);
+  animation: fxRainFar 0.5s linear infinite;
+}
+/* 近处骤雨：粗、快、更斜 */
+body[data-scene-fx="rain"] .fx::after {
+  background-image: repeating-linear-gradient(0deg,
+    transparent 0 10px, rgba(74, 94, 116, 0.22) 10px 11px);
+  animation: fxRainNear 0.32s linear infinite;
+}
+@keyframes fxRainFar {                      /* 240px = 8px × 30 个周期 */
+  from { transform: translate3d(0, -240px, 0) skewX(-9deg); }
+  to   { transform: translate3d(0, 0, 0) skewX(-9deg); }
+}
+@keyframes fxRainNear {                     /* 220px = 11px × 20 个周期 */
+  from { transform: translate3d(0, -220px, 0) skewX(-15deg); }
+  to   { transform: translate3d(0, 0, 0) skewX(-15deg); }
+}
+
+/* 震抖：纸面入场抖一次即衰减停下，不做持续抖动干扰阅读 */
+body[data-scene-fx="shake"] .stream { animation: fxQuake 2.2s ease-out 1 both; }
+@keyframes fxQuake {
+  0%   { transform: translate3d(0, 0, 0); }
+  7%   { transform: translate3d(-2px, 1px, 0); }
+  16%  { transform: translate3d(2px, -1px, 0); }
+  28%  { transform: translate3d(-1.5px, 0.5px, 0); }
+  43%  { transform: translate3d(1px, -0.5px, 0); }
+  61%  { transform: translate3d(-0.6px, 0.3px, 0); }
+  80%  { transform: translate3d(0.3px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+/* --------------------------------------------------------------------------
    3. 书架首页（launcher）
    -------------------------------------------------------------------------- */
 .launcher {
@@ -610,6 +663,9 @@ body[data-color-mode="dark"] .scene-overlay { background: rgba(0, 0, 0, 0.55); }
   .typing-indicator span { animation: none; opacity: 0.6; }
   .tap-hint, .scene-tap, .stream.paging .block.page-in, .stream.paging .block.page-out { animation: none; opacity: 1; transform: none; }
   .scene-overlay, .scene-card { transition: none; }
+  .fx { transition: none; }
+  body[data-scene-fx="rain"] .fx { opacity: 0; }          /* 雨丝是持续动画，直接不显示 */
+  body[data-scene-fx="shake"] .stream { animation: none; }
 }
 
 /* 4.4 底栏：返回 + 进度条 + 菜单 */

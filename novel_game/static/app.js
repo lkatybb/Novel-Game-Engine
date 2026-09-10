@@ -445,6 +445,7 @@ function handleSsePart(part) {
       // 后端保证该事件先于一切正文到达：立即弹窗并拦阻播放，关闭后从首页开始
       if (app.pager && evt.name) {
         app.pager.gated = true;
+        setSceneFx(evt);
         openSceneModal(evt.name, evt.desc || '');
       }
       break;
@@ -482,9 +483,37 @@ const PAGER_TICK = 200;    // 协调心跳 ms（铺增量文字、检测定稿�
 const PAGE_OUT_MS = 280;   // 当前页下沉淡出时长，与 CSS pageSink 一致
 const PAGE_IN_MS = 500;    // 下一页弹出时长，与 CSS pagePop 一致
 
+/* 情景 → 氛围特效：键名与 style.css 里 body[data-scene-fx] 的取值一一对应，按顺序取首个命中 */
+const SCENE_FX = [
+  { fx: 'rain', re: /雨|滂沱|雷/ },
+  { fx: 'shake', re: /震|颤|抖|崩|塌|地动|厮杀|爆|轰/ },
+];
+
+/** 由场景名称/描述判定氛围特效；无命中返回空串（回到常规静景） */
+function detectSceneFx(scene) {
+  const text = `${(scene && scene.name) || ''}${(scene && scene.desc) || ''}`;
+  const hit = SCENE_FX.find((it) => it.re.test(text));
+  return hit ? hit.fx : '';
+}
+
+/** 写入 body[data-scene-fx]；同值先清空并触发重排，让同一情景在新回合能重播入场动效 */
+function setSceneFx(scene) {
+  const next = detectSceneFx(scene);
+  if (!next) {
+    delete dom.body.dataset.sceneFx;
+    return;
+  }
+  if (dom.body.dataset.sceneFx === next) {
+    delete dom.body.dataset.sceneFx;
+    void dom.body.offsetWidth;
+  }
+  dom.body.dataset.sceneFx = next;
+}
+
 /** 开启新一轮：复位分页状态机；scene 有效时先弹窗（此时正文一个字都未显示） */
 function beginTurn({ scene } = {}) {
   app.pendingChoices = null;
+  setSceneFx(scene);            // 本轮情景特效；scene 为空即回到静景
   app.pager = {
     segs: [],          // 已到达内容段 [{kind:'npc'|'scene', speaker, text}]
     pages: [],         // 扁平化页 [{kind, speaker, text}]，每段独立分页
