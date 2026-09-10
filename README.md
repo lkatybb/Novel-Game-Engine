@@ -107,6 +107,16 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 - **注入与展示**：`format_state` 以「好感度 / 理智度」注入 DM 与 NPC，NPC 台词会据此调整语气；顶栏 HUD 用两条窄条实时展示（好感＝青绿、理智＝赭黄）。
 - **回归闸门**：`test_contract.py` 的 A12 离线断言锁死「Prompt 声明 → 数值钳制 → 注入标签」三层，防止 Prompt 与 HUD 之间静默脱钩成不会动的死表。
 
+### 7. 纸感与仿真油墨
+
+阅读区不再是纯色面板，而是「一张摊在桌上的纸」，全部由 [`novel_game/static/style.css`](novel_game/static/style.css) 的 CSS 令牌驱动，**零新增依赖、零接口变更**：
+
+- **纸纤维**：`--paper-fiber` 用一段内联 SVG 的 `feTurbulence`（`fractalNoise`，200×200，`stitchTiles` 保证无缝平铺）生成噪点，再用 `feColorMatrix saturate=0` + `feComponentTransfer/feFuncA` 把透明度**烤成常量**。烤进图片而不靠 `opacity`，是为了让同一张图既能当页面背景层，也能直接叠进纸页的 `background-image` 栈里。
+- **纸页**（`.stream`）：`background-color: var(--paper)` 打底，叠一条 22px 的文字区渐变（模拟纸面弧度）与纤维，`background-blend-mode: multiply` 让纤维只压暗不泛灰；再补 1px 纸边和一层投影。**纸页 padding 属于分页测高输入，不得改动。**
+- **夜读**：暗色令牌独立出更低 alpha 的纤维（`screen` 混合才看得见），纸面 `#201d17` 比页面底色略亮。
+- **仿真油墨**：正文/台词/标题用极轻的 `text-shadow` 做洇墨外扩，主标题与大标题再加一道压印高光。**刻意不用 `filter: url(#ink)`（`feDisplacementMap`）**——逐 token 流式输出会反复重算整块滤镜，违反性能底线。
+- **选项卡**用半透明纸色令牌 `--card-veil`，避免整屏宽的实心亮板压在纸页上。
+
 ---
 
 ## 项目结构
@@ -305,6 +315,7 @@ python _diag_sse.py
 | F11 | 角色私聊（只读旁路） | ✅ 完成（独立 `POST /api/game/chat`，不写状态、不落盘、复用 A11 Mask 防剧透口径） |
 | F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
 | F13 | 好感度 / 理智度 | ✅ 完成（激活 `GameState.val` / `hp`：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 实时展示，`[全局状态]` 以新口径注入 DM / NPC） |
+| F14 | 纸感与仿真油墨 | ✅ 完成（CSS 令牌 `--paper` / `--paper-fiber` / `--ink-bleed` / `--letterpress` / `--card-veil`：纸纤维、纸页明暗与投影、洇墨与压印；浅/暗各一套，零新增依赖） |
 
 ### 明确不做
 

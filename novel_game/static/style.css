@@ -25,6 +25,14 @@
                "Source Han Serif SC", "SimSun", serif;
   --font-sans: "华文细黑", "STXihei", "PingFang SC", "Microsoft YaHei",
                system-ui, sans-serif;
+  /* 纸感：纸页底面（略亮于页面底色）/ 纸纤维噪点（200px 平铺静态图；alpha 已烤进 SVG 的
+     feFuncA，故可同时用于页面背景层与纸页背景板，无需依赖 opacity） */
+  --paper: #f7f4ec;
+  --paper-fiber: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0' intercept='0.15'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* 油墨：洇墨外扩（极轻）/ 压印高光 */
+  --ink-bleed: rgba(43, 40, 35, 0.22);
+  --letterpress: rgba(255, 255, 255, 0.55);
+  --card-veil: rgba(247, 244, 236, 0.5);   /* 选项卡：半透明纸色，能透出底纹 */
 }
 
 body[data-color-mode="dark"] {
@@ -41,6 +49,11 @@ body[data-color-mode="dark"] {
   --danger: #d98a72;          /* 破坏性操作（删除），暗色下提亮 */
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.3);
+  --paper: #201d17;                      /* 夜宣纸：纸页略亮于页面底色 */
+  --paper-fiber: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0' intercept='0.06'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)'/%3E%3C/svg%3E");
+  --ink-bleed: rgba(232, 226, 212, 0.18);
+  --letterpress: rgba(0, 0, 0, 0.55);
+  --card-veil: rgba(232, 226, 212, 0.06);
 }
 
 /* --------------------------------------------------------------------------
@@ -77,14 +90,32 @@ body[data-color-mode="dark"] .backdrop {
 }
 .grain {
   position: fixed; inset: 0; z-index: -2; pointer-events: none;
-  opacity: 0.35; mix-blend-mode: multiply;
-  background-image: repeating-linear-gradient(
-    0deg, transparent 0 2px, rgba(43,40,35,0.015) 2px 3px);
+  background-image: var(--paper-fiber);
+  background-size: 200px 200px;      /* 与 SVG 同尺寸平铺，纤维颗粒不被拉伸 */
+  mix-blend-mode: multiply;          /* 纤维只压暗，不往底色里泛灰 */
 }
-body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
+body[data-color-mode="dark"] .grain { mix-blend-mode: screen; }   /* 夜读下纤维是浅浅提亮 */
 .vignette {
   position: fixed; inset: 0; z-index: -1; pointer-events: none;
   box-shadow: inset 0 0 180px rgba(43, 40, 35, 0.10);
+}
+
+/* --------------------------------------------------------------------------
+   2.1 仿真油墨：字形边缘做极轻的洇墨外扩，标题再加压印高光
+   只用 text-shadow 实现（不改字形栅格、不引入 filter）——长文逐字流式时不会重绘整块
+   -------------------------------------------------------------------------- */
+.story-text,
+.block-echo p,
+.block-npc .speaker,
+.chip,
+.chat-msg,
+.brand h1,
+.modal-inner h2 {
+  text-shadow: 0 0 0.55px var(--ink-bleed);
+}
+.brand h1,
+.modal-inner h2 {
+  text-shadow: 0 1px 0 var(--letterpress), 0 0 0.55px var(--ink-bleed);
 }
 
 /* --------------------------------------------------------------------------
@@ -283,6 +314,28 @@ body[data-color-mode="dark"] .grain { mix-blend-mode: screen; opacity: 0.12; }
   margin: 0 auto;
   padding: 40px 24px 36px;
   display: flex; flex-direction: column;
+  /* 纸页：底面色 + 纤维 + 左右两侧浅淡明暗（纸面弧度） */
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(90deg, rgba(43, 40, 35, 0.05), rgba(43, 40, 35, 0) 22px,
+                    rgba(43, 40, 35, 0) calc(100% - 22px), rgba(43, 40, 35, 0.05)),
+    var(--paper-fiber);
+  background-size: auto, 200px 200px;
+  background-repeat: no-repeat, repeat;
+  background-blend-mode: multiply, multiply;   /* 纤维与纸色相乘：只压暗、不泛灰 */
+  box-shadow:
+    0 0 0 1px rgba(43, 40, 35, 0.05),          /* 纸边 */
+    0 34px 64px -40px rgba(43, 40, 35, 0.3);   /* 纸页投在桌面上的影 */
+}
+body[data-color-mode="dark"] .stream {
+  background-image:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0) 22px,
+                    rgba(0, 0, 0, 0) calc(100% - 22px), rgba(0, 0, 0, 0.22)),
+    var(--paper-fiber);
+  background-blend-mode: multiply, screen;   /* 暗色下纤维改为提亮，才看得见 */
+  box-shadow:
+    0 0 0 1px rgba(232, 226, 212, 0.05),
+    0 34px 64px -40px rgba(0, 0, 0, 0.6);
 }
 .stream-spacer { flex: 1 0 auto; }   /* 内容少时沉底，多时收缩为 0，滚动可达顶部 */
 
@@ -446,7 +499,7 @@ body[data-color-mode="dark"] .scene-overlay { background: rgba(0, 0, 0, 0.55); }
   text-indent: 0.22em;            /* 字距导致的视觉偏移补偿 */
   color: #f6f2e8;
   margin: 0 0 16px;
-  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+  text-shadow: 0 0 0.55px rgba(255, 255, 255, 0.2), 0 2px 24px rgba(0, 0, 0, 0.35);
 }
 .scene-desc {
   font-family: var(--font-song);
@@ -475,7 +528,7 @@ body[data-color-mode="dark"] .scene-overlay { background: rgba(0, 0, 0, 0.55); }
 .choice-btn {
   display: flex; align-items: center; gap: 14px;
   border: 1px solid var(--line);
-  background: transparent;
+  background: var(--card-veil);
   color: var(--ink-0);
   border-radius: 14px;
   padding: 12px 22px;
@@ -601,10 +654,17 @@ body[data-color-mode="dark"] .menu-panel {
 .modal-inner {
   width: min(420px, 88vw);
   max-height: 80vh; overflow-y: auto;
-  background: var(--bg-1);
+  background: var(--paper);
   border-radius: 20px;
   padding: 32px;
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    0 0 0 1px rgba(43, 40, 35, 0.06),
+    var(--shadow-lg);
+}
+body[data-color-mode="dark"] .modal-inner {
+  box-shadow:
+    0 0 0 1px rgba(232, 226, 212, 0.06),
+    var(--shadow-lg);
 }
 .modal-inner h2 { font-size: 22px; letter-spacing: 0.08em; }
 .modal-copy {
