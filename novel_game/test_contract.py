@@ -15,8 +15,10 @@
            （不依赖服务，故先于网络检查执行）
     A10    离线确定性断言：关键事件 order 在提取出口归一化为稠密 1..N，
            且归一化后的清单能通过硬锁门槛
+    A11    离线双向断言：DM 自由文本容器命中事件名 → A4 必须通过（Mask 生效）；
+           结构性字段泄露未触发事件名 → A4 必须失败（鉴别力保留）
     PRE-1  测试样本文件存在
-    PRE-2  8888 服务可达
+    PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
     A1     SSE 事件类型集合 ⊆ 协议白名单
     A2     SSE 必含 {stage, scene, choices, state, done}
@@ -32,13 +34,16 @@
 """
 
 import json
+import os
 import sys
 import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-BASE = "http://127.0.0.1:8888"
+# 服务地址：默认 8888（M2/M3 复审位），可用环境变量覆盖，如
+#   $env:CONTRACT_BASE='http://127.0.0.1:8889'
+BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 SAMPLE = Path(__file__).resolve().parent / "data" / "novels" / "西游记-样本.txt"
 
 # SSE 协议白名单 / 必含事件（API 契约，不得静默变化）
@@ -277,6 +282,35 @@ def check_offline_order_contract():
           f"已触发 order 1 后，下一个事件被硬锁门槛接受 = {accepted}")
 
 
+def check_a11_masking():
+    """A11：锁死 A4 的 Mask 范围（M2 条件 C-1）。
+
+    A4 靠 Mask 掉 DM 自由文本容器才变稳定，扫面被缩小了；若没有断言守着，今后把 Mask
+    范围放大（乃至 Mask 整个 state）会让 A4 静默变成永真。故双向锁死：
+      A11-1 三个容器全部命中未触发事件名 → A4 必须通过，且 masked_hits 必须非空
+            （不判 masked_hits 的话，空 state 也能让这条断言成立 → 等于没测）
+      A11-2 再往结构面塞一个未触发事件名 → A4 必须失败（鉴别力保留）
+    """
+    order_map = {"石猴出世": 1, "发现水帘洞": 2, "称美猴王": 3, "拜师菩提": 4}
+    base = {"triggered": ["石猴出世"],
+            "next_event": {"event_name": "发现水帘洞", "order": 2},
+            "total": 4}
+
+    # A11-1：三个 DM 自由文本容器全部写入未触发事件名
+    dirty = dict(base,
+                 player_location="称美猴王的花果山",
+                 flags={"已拜师菩提，待祖师问名": True},
+                 inventory=["拜师菩提祖师的信物"])
+    reason, masked_hits = convergence_reason(dirty, order_map)
+    check("A11-1", reason == "" and bool(masked_hits),
+          f"三容器全命中 → A4 原因 = {reason!r}，Mask 命中 = {masked_hits or '空(断言将失效)'}")
+
+    # A11-2：同一 state 再往结构面塞入未触发事件名
+    leaky = dict(dirty, _timeline=[{"event_name": "称美猴王"}, {"event_name": "拜师菩提"}])
+    reason2, _ = convergence_reason(leaky, order_map)
+    check("A11-2", reason2 != "", f"结构性泄露 → A4 原因 = {reason2!r}")
+
+
 def main():
     print("=" * 72)
     print("TU-10a/10d 接口契约测试（SSE / state 协议）")
@@ -284,10 +318,11 @@ def main():
 
     check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
+    check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
         return
-    if not check("PRE-2", wait_server(), f"8888 服务可达: {BASE}"):
+    if not check("PRE-2", wait_server(), f"服务可达: {BASE}"):
         return
 
     novel_id = json.loads(upload(SAMPLE))["novel_id"]
