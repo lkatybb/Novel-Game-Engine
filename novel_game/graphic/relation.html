@@ -12,8 +12,10 @@
             --ink-1: #6f6a5e;
             --ink-2: #a09a8c;
             --line: rgba(43, 40, 35, 0.14);
-            --font-song: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
-            --font-sans: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+            --font-song: "华文宋体", "STSong", "Songti SC", "Noto Serif CJK SC",
+                         "Source Han Serif SC", "SimSun", serif;
+            --font-sans: "华文细黑", "STXihei", "PingFang SC", "Microsoft YaHei",
+                         system-ui, sans-serif;
         }
         body {
             margin: 0;
@@ -175,6 +177,63 @@
         }
         .tooltip .rel-item b { color: var(--ink-0); font-weight: 600; }
 
+        /* 角色百科面板：点击节点后从右侧滑出 */
+        .codex {
+            position: fixed; top: 62px; right: 0; bottom: 0;
+            width: 340px; max-width: 86vw;
+            background: rgba(236, 231, 220, 0.96);
+            backdrop-filter: blur(8px);
+            border-left: 1px solid var(--line);
+            box-shadow: -12px 0 40px rgba(43, 40, 35, 0.08);
+            padding: 22px 24px 32px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            z-index: 20;
+            transform: translateX(100%);
+            transition: transform 0.28s ease;
+        }
+        .codex.show { transform: none; }
+        .codex-head { display: flex; align-items: baseline; gap: 10px; }
+        .codex-name { font-size: 20px; letter-spacing: 0.06em; }
+        .codex-meta {
+            font-family: var(--font-sans); font-size: 11px;
+            color: var(--ink-2); letter-spacing: 0.12em;
+        }
+        .codex-close {
+            margin-left: auto; border: none; background: transparent;
+            color: var(--ink-2); font-size: 18px; line-height: 1;
+            cursor: pointer; padding: 0 2px;
+        }
+        .codex-close:hover { color: var(--ink-0); }
+        .codex-sec { margin-top: 18px; }
+        .codex-sec h5 {
+            font-family: var(--font-sans); font-size: 11px; font-weight: 400;
+            letter-spacing: 0.18em; color: var(--ink-2); margin: 0 0 6px;
+        }
+        .codex-sec p { font-size: 13px; line-height: 1.85; color: var(--ink-1); }
+        .codex-sec ul { list-style: none; }
+        .codex-sec li {
+            font-size: 13px; line-height: 1.8; color: var(--ink-1);
+            padding-left: 14px; position: relative;
+        }
+        .codex-sec li::before {
+            content: "·"; position: absolute; left: 4px; color: var(--ink-2);
+        }
+        .codex-sec li b { color: var(--ink-0); font-weight: 400; }
+        .codex-sec .excerpt {
+            border-left: 2px solid var(--line); padding-left: 10px;
+            margin-top: 8px; font-size: 12.5px; line-height: 1.8;
+            color: var(--ink-1); max-height: 8.5em; overflow: hidden;
+        }
+        .codex-sec .excerpt .src {
+            display: block; font-family: var(--font-sans); font-size: 10.5px;
+            color: var(--ink-2); letter-spacing: 0.1em; margin-bottom: 2px;
+        }
+        .codex-hint {
+            margin-top: 18px; font-family: var(--font-sans); font-size: 12px;
+            color: var(--ink-2); letter-spacing: 0.1em;
+        }
+
         /* 加载态 */
         .empty-hint {
             position: fixed; inset: 0;
@@ -200,6 +259,7 @@
 
     <svg id="graph"></svg>
     <div class="legend" id="legend"></div>
+    <aside class="codex" id="codex"></aside>
     <div class="tooltip" id="tooltip"></div>
     <div class="empty-hint" id="emptyHint">正在加载人物关系图…</div>
 
@@ -212,6 +272,66 @@
         const GROUP_COLOR = { '主角': '#2b2823', '配角': '#ece7dc', '配角团': '#ffffff' };
         let linkLabelsVisible = false;
         let simulation = null;
+        let currentNovelId = '';
+
+        function esc(v) {
+            return String(v == null ? '' : v).replace(/[&<>"]/g,
+                (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        }
+
+        function hideCodex() {
+            document.getElementById('codex').classList.remove('show');
+        }
+
+        function codexHead(name, meta) {
+            return `<div class="codex-head"><div class="codex-name">${esc(name)}</div>` +
+                `<div class="codex-meta">${esc(meta || '')}</div>` +
+                `<button class="codex-close" onclick="hideCodex()">×</button></div>`;
+        }
+
+        function codexBody(data) {
+            const p = data.profile || {};
+            const labels = [['personality', '性格'], ['goal', '目标'],
+                            ['speech_style', '说话风格'], ['secret', '隐秘']];
+            let html = labels
+                .filter(([k]) => p[k])
+                .map(([k, label]) => `<div class="codex-sec"><h5>${label}</h5><p>${esc(p[k])}</p></div>`)
+                .join('');
+            if (!html) html = '<div class="codex-hint">暂无该角色的人设档案</div>';
+
+            const events = data.events || [];
+            if (events.length) {
+                html += '<div class="codex-sec"><h5>关联关键事件</h5><ul>' + events.map(e =>
+                    `<li><b>#${esc(e.order)} ${esc(e.event_name)}</b><br>${esc(e.trigger_condition)}</li>`
+                ).join('') + '</ul></div>';
+            }
+
+            const excerpts = data.excerpts || [];
+            if (excerpts.length) {
+                html += '<div class="codex-sec"><h5>原著出处</h5>' + excerpts.map(e =>
+                    `<div class="excerpt"><span class="src">原著第 ${esc(e.chunk_index + 1)} 段</span>${esc(e.text)}</div>`
+                ).join('') + '</div>';
+            }
+            return html;
+        }
+
+        // 节点点击：拉取角色百科（人设 + 关键事件 + 原著出处）
+        async function showCodex(d) {
+            const box = document.getElementById('codex');
+            box.classList.add('show');
+            const meta = `${d.group || '—'} · 重要性 ${d.weight || '-'} 分`;
+            box.innerHTML = codexHead(d.id, meta) + '<div class="codex-hint">正在检索角色档案…</div>';
+            let data;
+            try {
+                const res = await fetch(`/api/novel/${encodeURIComponent(currentNovelId)}` +
+                    `/character/${encodeURIComponent(d.id)}`);
+                data = await res.json();
+            } catch (e) {
+                box.innerHTML = codexHead(d.id, meta) + '<div class="codex-hint">加载失败，请检查服务是否运行</div>';
+                return;
+            }
+            box.innerHTML = codexHead(d.id, meta) + codexBody(data);
+        }
 
         function toggleLabels() {
             linkLabelsVisible = !linkLabelsVisible;
@@ -236,6 +356,7 @@
             const params = new URLSearchParams(window.location.search);
             const novelId = document.getElementById('novel-id').value || params.get('novel_id');
             if (!novelId) { d3.select('#emptyHint').text('请先上传小说'); return; }
+            currentNovelId = novelId;
 
             const hint = d3.select('#emptyHint');
             hint.style('display', 'flex').text('正在加载人物关系图…');
@@ -280,6 +401,18 @@
             linkGroup.append('text')
                 .text(d => d.relation || d.type || '');
 
+            // 用与真实节点相同的 CSS 路径测宽，避免测量字体与渲染字体不一致
+            const tmpWrap = svg.append('g').attr('class', 'node')
+                .style('visibility', 'hidden');
+            const tmpText = tmpWrap.append('g').attr('class', 'pill').append('text').attr('y', 1);
+            nodes.forEach(d => {
+                tmpText.text(d.id);
+                const w = tmpText.node().getComputedTextLength();
+                d.pillW = Math.max(56, Math.min(180, w + 28));
+                d.pillH = 32;
+            });
+            tmpWrap.remove();
+
             const node = svg.selectAll('.node').data(nodes).enter().append('g')
                 .attr('class', d => {
                     if (d.group === '主角') return 'node lead';
@@ -297,17 +430,6 @@
                         // 拖拽后保持固定，不自动回弹
                     }));
 
-            // 测量文本宽度并绘制胶囊形节点
-            const tmpText = svg.append('text').attr('font-family', 'Songti SC, serif')
-                .attr('font-size', '14px').style('visibility', 'hidden');
-            nodes.forEach(d => {
-                tmpText.text(d.id);
-                const w = tmpText.node().getComputedTextLength();
-                d.pillW = Math.max(56, Math.min(180, w + 28));
-                d.pillH = 32;
-            });
-            tmpText.remove();
-
             const pill = node.append('g').attr('class', 'pill');
             pill.append('rect')
                 .attr('x', d => -d.pillW / 2)
@@ -316,6 +438,10 @@
                 .attr('height', d => d.pillH)
                 .attr('rx', 16).attr('ry', 16);
             pill.append('text').attr('y', 1).text(d => d.id);
+
+            // 节点点击：右侧角色百科；点空白处收起
+            node.on('click', (e, d) => { e.stopPropagation(); showCodex(d); });
+            svg.on('click', () => hideCodex());
 
             // 节点 hover：高亮相连，其余淡化
             node.on('mouseover', function(e, d) {
