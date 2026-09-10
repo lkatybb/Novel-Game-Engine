@@ -49,6 +49,19 @@ def _llm_call(system_prompt: str, user_prompt: str) -> str:
     return response.choices[0].message.content
 
 
+def normalize_event_orders(events: list[dict]) -> list[dict]:
+    """把关键事件的 order 归一化为稠密 1..N（按声明 order 稳定排序后重新编号）。
+
+    硬锁机制的门槛是 order <= max(已触发)+1（见 memory/global_state._accept_triggered），
+    隐含假设 order 稠密。LLM 可能跳号（如 1/3/5）或缺字段（按末位处理，与原
+    setdefault 999 语义一致），此时第一个未触发事件会被永久拒绝、时间线静默冻结。
+
+    Returns: 新列表（不修改入参），每项带 order = 1..N
+    """
+    ordered = sorted(events, key=lambda e: e.get("order", 999))
+    return [dict(e, order=i) for i, e in enumerate(ordered, start=1)]
+
+
 def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) -> dict:
     """
     从小说文本中提取人物关系和NPC人设
@@ -150,11 +163,11 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
     logger.info("开始提取关键事件清单...")
     events_result = _llm_call(key_events_prompt, text_sample)
     key_events = json.loads(events_result).get("events", [])
-    # 确保每个事件都有必要字段
+    # 补齐必要字段；order 交给 normalize_event_orders 归一化为稠密 1..N（硬锁门槛依赖稠密序）
     for e in key_events:
-        e.setdefault("order", 999)
         e.setdefault("trigger_condition", "")
         e.setdefault("key_characters", [])
+    key_events = normalize_event_orders(key_events)
 
     # 缓存（内存 + 磁盘）
     result = {

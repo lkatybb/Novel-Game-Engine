@@ -13,13 +13,15 @@
 检查项：
     A9     离线确定性断言：直调 _enrich_state，锁死 order 不连续 / 缺 order 的事件清单
            （不依赖服务，故先于网络检查执行）
+    A10    离线确定性断言：关键事件 order 在提取出口归一化为稠密 1..N，
+           且归一化后的清单能通过硬锁门槛
     PRE-1  测试样本文件存在
     PRE-2  8888 服务可达
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
     A1     SSE 事件类型集合 ⊆ 协议白名单
     A2     SSE 必含 {stage, scene, choices, state, done}
     A3     /action 整条 SSE 报文中 "trigger_condition" 出现 0 次
-    A4     未触发事件名收敛：有未触发事件时恰好露 1 个，且不许一个都不露
+    A4     未触发事件名收敛：结构性字段里恰好露 1 个（DM 自由文本容器已 Mask）
     A5     SSE state 含 triggered / next_event / total，next_event 仅含 event_name+order
     A6     /start 的 state 满足 A5 + A8 口径（TU-1 三挂载点一致性）
     A7     /resume 的 state 满足 A5 + A8 口径（TU-1 三挂载点一致性）
@@ -42,6 +44,10 @@ SAMPLE = Path(__file__).resolve().parent / "data" / "novels" / "西游记-样本
 # SSE 协议白名单 / 必含事件（API 契约，不得静默变化）
 ALLOWED_EVENTS = {"stage", "scene_change", "scene", "npc", "choices", "state", "error", "done"}
 REQUIRED_EVENTS = {"stage", "scene", "choices", "state", "done"}
+
+# state 里由 DM 自由填写文本的容器：事件名可能被写进位置/见闻/行囊，
+# A4 断言前必须 Mask 掉，否则模型措辞一变就随机变红（不可作为回归闸门）
+DM_TEXT_FIELDS = ("player_location", "flags", "inventory")
 
 failures = []
 
@@ -113,23 +119,35 @@ def upload(path: Path, timeout: int = 600) -> str:
         return resp.read().decode("utf-8")
 
 
-def convergence_reason(state: dict, order_map: dict) -> str:
-    """A4 口径：未触发事件名的收敛性，返回失败原因（通过则返回空串）。
+def convergence_reason(state: dict, order_map: dict):
+    """A4 口径：未触发事件名的收敛性。
 
-    有未触发事件时必须恰好露出 1 个（即 next_event），不许一个都不露——
-    把紧邻的那个也一起藏掉会让 β 方案静默退化成"全隐藏"。
+    只扫结构性字段（triggered / next_event / total 等），先 Mask 掉三个 DM 自由文本
+    容器（player_location / flags / inventory）——它们的文字由模型生成，随时可能恰好
+    写出某个事件名（如见闻里出现"已拜师菩提"），拿它们做断言会让整个闸门随机变红。
+
+    Returns: (失败原因, 被 Mask 的容器命中情况 {容器名: [事件名]})——通过时原因为空串
     """
     triggered = state.get("triggered")
     if not isinstance(triggered, list):
-        return "triggered 缺失/非数组，无法判定"
-    state_text = json.dumps(state, ensure_ascii=False)
+        return "triggered 缺失/非数组，无法判定", {}
     untriggered = {n: o for n, o in order_map.items() if n not in triggered}
-    shown = sorted(n for n in untriggered if n in state_text)
+    structural_text = json.dumps({k: v for k, v in state.items() if k not in DM_TEXT_FIELDS},
+                                 ensure_ascii=False)
+    masked_hits = {}
+    for key in DM_TEXT_FIELDS:
+        if key not in state:
+            continue
+        text = json.dumps(state[key], ensure_ascii=False)
+        hit = sorted(n for n in untriggered if n in text)
+        if hit:
+            masked_hits[key] = hit
+    shown = sorted(n for n in untriggered if n in structural_text)
     want = 1 if untriggered else 0
     if len(shown) == want:
-        return ""
+        return "", masked_hits
     return (f"未触发事件名出现 {len(shown)} 个（{shown}），应为 {want} 个"
-            f"（未触发事件共 {len(untriggered)} 个）")
+            f"（未触发事件共 {len(untriggered)} 个）"), masked_hits
 
 
 def next_event_reason(state: dict, order_map: dict) -> str:
@@ -215,12 +233,57 @@ def check_offline_next_event():
         ce.get_key_events = original
 
 
+def check_offline_order_contract():
+    """A10：离线确定性断言——关键事件 order 在提取出口被归一化为稠密 1..N。
+
+    硬锁门槛 order <= max(已触发)+1 假设 order 稠密：LLM 跳号（1/3/5）或缺字段时，
+    第一个未触发事件会被永久拒绝且无任何报错（时间线静默冻结）。
+    """
+    import memory.global_state as global_state
+    from pipeline.character_extractor import normalize_event_orders
+
+    sparse = [{"event_name": "事件A", "order": 1},
+              {"event_name": "事件B", "order": 3},
+              {"event_name": "事件C", "order": 5}]
+
+    # A10-1：跳号 1/3/5 → 稠密 1/2/3，且保持声明顺序
+    got = normalize_event_orders(sparse)
+    check("A10-1",
+          [e["order"] for e in got] == [1, 2, 3]
+          and [e["event_name"] for e in got] == ["事件A", "事件B", "事件C"],
+          f"跳号 1/3/5 → {[(e['event_name'], e['order']) for e in got]}")
+
+    # A10-2：缺 order 视为末位（与原 setdefault 999 语义一致）
+    got = normalize_event_orders([{"event_name": "事件A", "order": 1},
+                                  {"event_name": "事件B"},
+                                  {"event_name": "事件C", "order": 3}])
+    check("A10-2",
+          [e["order"] for e in got] == [1, 2, 3]
+          and [e["event_name"] for e in got] == ["事件A", "事件C", "事件B"],
+          f"缺 order 视为末位 → {[(e['event_name'], e['order']) for e in got]}")
+
+    # A10-3：归一化后的清单能通过硬锁门槛（已触发 order 1 → 下一个事件可入库）
+    normalized = normalize_event_orders(sparse)
+    original = global_state.get_key_events
+    try:
+        global_state.get_key_events = lambda novel_id: normalized
+        global_state.init_state("a10-probe", "x")
+        global_state.update_state("a10-probe", {"triggered_events": ["事件A"]})
+        global_state.update_state("a10-probe", {"triggered_events": ["事件B"]})
+        accepted = list(global_state.get_state("a10-probe").triggered_events)
+    finally:
+        global_state.get_key_events = original
+    check("A10-3", accepted == ["事件A", "事件B"],
+          f"已触发 order 1 后，下一个事件被硬锁门槛接受 = {accepted}")
+
+
 def main():
     print("=" * 72)
     print("TU-10a/10d 接口契约测试（SSE / state 协议）")
     print("=" * 72)
 
-    check_offline_next_event()   # A9：离线断言，先跑，不受服务状态影响
+    check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
+    check_offline_order_contract()  # A10：order 稠密契约，同样离线
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
         return
@@ -277,8 +340,10 @@ def main():
 
         # A4：收敛性——有未触发事件时 state 中必须恰好出现 1 个未触发事件名。
         # 一个都不露（把 next_event 也一起藏掉）会让 β 方案静默退化成"全隐藏"，判失败。
-        reason = convergence_reason(state, order_map)
+        reason, masked_hits = convergence_reason(state, order_map)
         check("A4", not reason, "SSE state 未触发事件名收敛" + ("" if not reason else "：" + reason))
+        print(f"[INFO] 已 Mask 的 DM 自由文本容器命中未触发事件名 = {masked_hits or '无'}"
+              f"（仅观测，不参与断言）")
 
         # A5：state 契约三字段（含 A8 口径）
         check_state_contract("A5", state, "/action SSE", order_map)
