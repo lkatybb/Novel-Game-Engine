@@ -11,16 +11,20 @@
     python test_contract.py
 
 检查项：
+    A9     离线确定性断言：直调 _enrich_state，锁死 order 不连续 / 缺 order 的事件清单
+           （不依赖服务，故先于网络检查执行）
     PRE-1  测试样本文件存在
     PRE-2  8888 服务可达
-    PRE-3  上传后能取到非空的关键事件清单（A4 的判定依据）
+    PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
     A1     SSE 事件类型集合 ⊆ 协议白名单
     A2     SSE 必含 {stage, scene, choices, state, done}
     A3     /action 整条 SSE 报文中 "trigger_condition" 出现 0 次
-    A4     SSE state 中未触发事件名出现 ≤1 个，且其 order == max(已触发)+1
+    A4     未触发事件名收敛：有未触发事件时恰好露 1 个，且不许一个都不露
     A5     SSE state 含 triggered / next_event / total，next_event 仅含 event_name+order
-    A6     /start 的 state 满足 A5 口径（TU-1 三挂载点一致性）
-    A7     /resume 的 state 满足 A5 口径（TU-1 三挂载点一致性）
+    A6     /start 的 state 满足 A5 + A8 口径（TU-1 三挂载点一致性）
+    A7     /resume 的 state 满足 A5 + A8 口径（TU-1 三挂载点一致性）
+    A8     存在未触发事件时 next_event 不得为 null，且是未触发中 order 最小者；
+           未触发为空时 next_event 必须为 null
 
 退出码：全部通过 0；任一失败 1（失败项在末尾汇总）
 """
@@ -109,8 +113,50 @@ def upload(path: Path, timeout: int = 600) -> str:
         return resp.read().decode("utf-8")
 
 
-def check_state_contract(cid: str, state: dict, label: str) -> bool:
-    """A5 口径：triggered / next_event / total 三字段齐全且不含 trigger_condition"""
+def convergence_reason(state: dict, order_map: dict) -> str:
+    """A4 口径：未触发事件名的收敛性，返回失败原因（通过则返回空串）。
+
+    有未触发事件时必须恰好露出 1 个（即 next_event），不许一个都不露——
+    把紧邻的那个也一起藏掉会让 β 方案静默退化成"全隐藏"。
+    """
+    triggered = state.get("triggered")
+    if not isinstance(triggered, list):
+        return "triggered 缺失/非数组，无法判定"
+    state_text = json.dumps(state, ensure_ascii=False)
+    untriggered = {n: o for n, o in order_map.items() if n not in triggered}
+    shown = sorted(n for n in untriggered if n in state_text)
+    want = 1 if untriggered else 0
+    if len(shown) == want:
+        return ""
+    return (f"未触发事件名出现 {len(shown)} 个（{shown}），应为 {want} 个"
+            f"（未触发事件共 {len(untriggered)} 个）")
+
+
+def next_event_reason(state: dict, order_map: dict) -> str:
+    """A8 口径：校验 next_event 的取值，返回失败原因（通过则返回空串）。
+
+    存在未触发事件时，next_event 必须是"未触发事件中 order 最小者"——不能为 null
+    （否则 β 方案会静默退化成"全隐藏"），也不能指向更靠后的事件。
+    """
+    triggered = state.get("triggered")
+    if not isinstance(triggered, list):
+        return "triggered 缺失/非数组，无法判定 next_event"
+    untriggered = {n: o for n, o in order_map.items() if n not in triggered}
+    ne = state.get("next_event")
+    if not untriggered:
+        return "" if ne is None else f"关键事件已全部触发，next_event 应为 null，实为 {ne!r}"
+    if not isinstance(ne, dict):
+        return f"仍有 {len(untriggered)} 个未触发事件，next_event 不得为 {ne!r}"
+    want = min(untriggered, key=lambda n: untriggered[n])
+    if ne.get("event_name") != want or ne.get("order") != untriggered[want]:
+        return (f"next_event = {ne!r}，应为 {{'event_name': {want!r}, "
+                f"'order': {untriggered[want]}}}（未触发中 order 最小者）")
+    return ""
+
+
+def check_state_contract(cid: str, state: dict, label: str, order_map: dict) -> bool:
+    """A5 + A8 口径：triggered / next_event / total 三字段齐全、不含 trigger_condition，
+    且 next_event 取值正确"""
     why = []
     for key in ("triggered", "next_event", "total"):
         if key not in state:
@@ -129,14 +175,52 @@ def check_state_contract(cid: str, state: dict, label: str) -> bool:
                 why.append(f"next_event 含多余字段 {sorted(extra)}")
     if "trigger_condition" in json.dumps(state, ensure_ascii=False):
         why.append("state 内出现 trigger_condition")
+    reason = next_event_reason(state, order_map)
+    if reason:
+        why.append(reason)
     detail = f"{label} state 契约" + ("" if not why else "：" + "；".join(why))
     return check(cid, not why, detail)
 
 
+def check_offline_next_event():
+    """A9：离线确定性断言——直调 _enrich_state，不依赖 8888 服务。
+
+    真实抽取结果的 order 可能不连续（LLM 输出不稳定）或缺字段（提取器
+    setdefault 999），此时 next_event 绝不允许静默变 null。
+    """
+    from api.route_game import _enrich_state
+    from models import GameState
+    import pipeline.character_extractor as ce
+
+    original = ce.get_key_events
+    try:
+        # 场景 1：order 有间隙（1 已触发，剩 3、5）→ 应露出 order 3
+        ce.get_key_events = lambda novel_id: [
+            {"event_name": "事件A", "order": 1},
+            {"event_name": "事件B", "order": 3},
+            {"event_name": "事件C", "order": 5},
+        ]
+        got = _enrich_state(GameState(novel_id="x", triggered_events=["事件A"]), "x")["next_event"]
+        check("A9-1", got == {"event_name": "事件B", "order": 3},
+              f"order 有间隙（3/5）→ next_event = {got!r}")
+
+        # 场景 2：order 缺失（提取器 setdefault 999）→ 仍须露出该事件
+        ce.get_key_events = lambda novel_id: [
+            {"event_name": "事件A", "order": 1},
+            {"event_name": "事件B"},
+        ]
+        got = _enrich_state(GameState(novel_id="x", triggered_events=["事件A"]), "x")["next_event"]
+        check("A9-2", got is not None, f"order 缺失 → next_event = {got!r}")
+    finally:
+        ce.get_key_events = original
+
+
 def main():
     print("=" * 72)
-    print("TU-10a 接口契约测试（当前预期：A3 / A4 / A5 失败 —— 红灯）")
+    print("TU-10a/10d 接口契约测试（SSE / state 协议）")
     print("=" * 72)
+
+    check_offline_next_event()   # A9：离线断言，先跑，不受服务状态影响
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
         return
@@ -160,7 +244,7 @@ def main():
     start_data = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
     session_id = start_data["session_id"]
     print(f"[INFO] 开局完成 session_id={session_id}")
-    check_state_contract("A6", start_data["state"], "/start")
+    check_state_contract("A6", start_data["state"], "/start", order_map)
 
     # ---------- /action ----------
     events, sse_text = post_sse("/api/game/action", {
@@ -186,28 +270,22 @@ def main():
     state = next((e["state"] for e in reversed(events)
                   if e.get("type") == "state" and isinstance(e.get("state"), dict)), None)
     if state is None:
-        check("A4", False, "SSE 中未取到 state 事件，无法判定")
-        check("A5", False, "SSE 中未取到 state 事件，无法判定")
+        for cid in ("A4", "A5", "A8"):
+            check(cid, False, "SSE 中未取到 state 事件，无法判定")
     else:
-        state_text = json.dumps(state, ensure_ascii=False)
         triggered = state.get("triggered")
 
-        # A4：未触发事件名出现 ≤1 个，且出现者 order == max(已触发)+1
-        shown = [n for n in order_map if n not in (triggered or []) and n in state_text]
-        why = []
-        if len(shown) > 1:
-            why.append(f"未触发事件名出现 {len(shown)} 个（{shown}）> 1")
-        if not isinstance(triggered, list):
-            why.append("triggered 缺失/非数组，无法判定 order")
-        else:
-            max_order = max([order_map[n] for n in triggered if n in order_map], default=0)
-            bad = [n for n in shown if order_map[n] != max_order + 1]
-            if bad:
-                why.append(f"出现者 order != max(已触发)+1={max_order + 1}：{[(n, order_map[n]) for n in bad]}")
-        check("A4", not why, "SSE state 未触发事件名收敛" + ("" if not why else "：" + "；".join(why)))
+        # A4：收敛性——有未触发事件时 state 中必须恰好出现 1 个未触发事件名。
+        # 一个都不露（把 next_event 也一起藏掉）会让 β 方案静默退化成"全隐藏"，判失败。
+        reason = convergence_reason(state, order_map)
+        check("A4", not reason, "SSE state 未触发事件名收敛" + ("" if not reason else "：" + reason))
 
-        # A5：state 契约三字段
-        check_state_contract("A5", state, "/action SSE")
+        # A5：state 契约三字段（含 A8 口径）
+        check_state_contract("A5", state, "/action SSE", order_map)
+
+        # A8：正向断言——next_event 不得被藏掉，且必须是未触发中 order 最小者
+        reason = next_event_reason(state, order_map)
+        check("A8", not reason, "SSE state next_event 正向断言" + ("" if not reason else "：" + reason))
 
         # 诊断（不断言）：整条报文里未触发事件名的出现情况，供评审判断
         whole = [n for n in order_map if n not in (triggered or []) and n in sse_text]
@@ -215,7 +293,7 @@ def main():
 
     # ---------- /resume ----------
     resume_data = json.loads(post_json("/api/game/resume", {"session_id": session_id}))
-    check_state_contract("A7", resume_data["state"], "/resume")
+    check_state_contract("A7", resume_data["state"], "/resume", order_map)
 
     print("-" * 72)
     if failures:

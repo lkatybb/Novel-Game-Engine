@@ -28,6 +28,10 @@ def _enrich_state(state, novel_id):
 
     只暴露已触发事件名，以及"下一个待触发事件"（仅 event_name + order）；
     trigger_condition 属于剧透内容，一律不下发。
+
+    next_event 取"未触发事件中 order 最小者"，不假设 order 连续——LLM 抽取的
+    编号可能跳号或缺字段（缺字段由提取器补 999），按 max(已触发)+1 精确匹配会
+    让 next_event 静默变 null，使前端退化成"全隐藏"。
     """
     from pipeline.character_extractor import get_key_events
     all_events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
@@ -35,8 +39,10 @@ def _enrich_state(state, novel_id):
 
     order_map = {e["event_name"]: e.get("order", 999) for e in all_events}
     done_orders = [order_map[n] for n in triggered if n in order_map]
-    next_order = max(done_orders, default=0) + 1
-    nxt = next((e for e in all_events if e.get("order", 999) == next_order), None)
+    max_done = max(done_orders, default=None)
+    nxt = next((e for e in all_events
+                if e["event_name"] not in triggered
+                and (max_done is None or e.get("order", 999) > max_done)), None)
 
     enriched = state.model_dump()
     enriched["triggered"] = triggered
