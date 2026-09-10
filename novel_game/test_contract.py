@@ -491,7 +491,17 @@ def check_reupload():
     check("B8-1", bool(novel_id) and data.get("chunk_count", 0) > 0,
           f"重新上传成功: novel_id={novel_id}, chunk_count={data.get('chunk_count')}")
 
-    start = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
+    # /start 偶发 502 = DM 的 LLM 调用上游失败（限流/超时），与本 TU 的删除语义无关；
+    # 允许一次有界重试，持久失败（例如真的开不了局）仍然判红。
+    for attempt in (1, 2):
+        try:
+            start = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))
+            break
+        except HTTPError as e:
+            if attempt == 2 or e.code != 502:
+                raise
+            print("[INFO] /start 返回 502（上游 LLM 失败），5 秒后重试一次")
+            time.sleep(5)
     check("B8-2", bool(start.get("story") or start.get("choices")),
           f"重新开局成功: session_id={start.get('session_id')}")
 
