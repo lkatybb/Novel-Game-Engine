@@ -3,7 +3,7 @@
 import json
 from config import LLM_MODEL, get_llm_client
 from pipeline.prompts import NPC_SYSTEM, NPC_CHAT_SYSTEM
-from pipeline.character_extractor import get_npc_profile
+from pipeline.character_extractor import get_npc_profile, get_protagonist_names, is_protagonist
 from memory.global_state import format_state
 from memory.short_term import format_memory
 
@@ -13,34 +13,51 @@ _CHAT_HISTORY_LIMIT = 6      # 只带最近 3 个来回，避免客户端塞长�
 _CHAT_TEXT_LIMIT = 200       # 单条对话文本上限
 
 
-def generate_dialogue(novel_id: str, session_id: str, npc_name: str, player_action: str) -> str:
-    """
-    生成NPC台词
+def _player_identity(novel_id: str) -> str:
+    """玩家身份段：告诉 NPC 玩家就是本作主角本人。
 
-    Returns: NPC说的一段话
+    台词与私聊共用同一口径——否则 NPC 会把玩家当旁人，甚至反过来扮演玩家本人。
     """
+    names = "、".join(get_protagonist_names(novel_id))
+    who = f"「{names}」" if names else ""
+    return (f"[玩家身份]\n玩家扮演本作主角{who}本人，正文里的“你”就是玩家。"
+            "不要用第三人称谈论玩家，也不要把玩家当成别的角色。")
+
+
+def build_dialogue_prompt(novel_id: str, session_id: str, npc_name: str,
+                          player_action: str) -> str:
+    """组装剧情内 NPC 台词 prompt"""
     profile = get_npc_profile(novel_id, npc_name)
-    state_text = format_state(session_id)
-
-    user_prompt = f"""[NPC人设]
+    return f"""[NPC人设]
 角色名: {npc_name}
 性格: {profile.get('personality', '未知')}
 秘密: {profile.get('secret', '无')}
 说话风格: {profile.get('speech_style', '正常')}
 核心目标: {profile.get('goal', '未知')}
 
+{_player_identity(novel_id)}
+
 [当前状态]
-{state_text}
+{format_state(session_id)}
 
 [玩家行为]
 {player_action}
 """
+
+
+def generate_dialogue(novel_id: str, session_id: str, npc_name: str, player_action: str) -> str:
+    """
+    生成NPC台词
+
+    Returns: NPC说的一段话
+    """
     client = get_llm_client()
     response = client.chat.completions.create(
         model=LLM_MODEL,
         messages=[
             {"role": "system", "content": NPC_SYSTEM},
-            {"role": "user", "content": user_prompt},
+            {"role": "user",
+             "content": build_dialogue_prompt(novel_id, session_id, npc_name, player_action)},
         ],
         response_format={"type": "json_object"},
         max_tokens=_NPC_MAX_TOKENS,
@@ -77,6 +94,8 @@ def build_chat_prompt(novel_id: str, session_id: str, npc_name: str, message: st
 说话风格: {profile.get('speech_style', '正常')}
 核心目标: {profile.get('goal', '未知')}
 
+{_player_identity(novel_id)}
+
 [已知剧情]
 {format_memory(session_id)}
 
@@ -98,8 +117,11 @@ def chat(novel_id: str, session_id: str, npc_name: str, message: str,
     只读——不写全局状态、不写短期记忆、不触发关键事件、不产生存档快照。
 
     Raises:
-        ValueError: 该角色没有可用的人设档案（人设校准不了，宁可明说也不硬答）
+        ValueError: 该角色是玩家自己扮演的主角（与自己私聊无意义）；
+                    或该角色没有可用的人设档案（人设校准不了，宁可明说也不硬答）
     """
+    if is_protagonist(novel_id, npc_name):
+        raise ValueError(f"「{npc_name}」是你自己扮演的主角，不能和自己私聊")
     if not get_npc_profile(novel_id, npc_name):
         raise ValueError(f"没有该角色的人设档案: {npc_name}")
 

@@ -2,8 +2,8 @@
 
 把原来手写在 api/route_game.py 与 play.py 里的编排逻辑收敛到一张图：
 
-    START → router ─┬─ dialog 且命中 NPC → npc → dm → END
-                    └─ 其它             → dm      → END
+    START → router ─┬─ dialog 且命中「非主角」NPC → npc → dm → END
+                    └─ 其它                   → dm      → END
 
 三个节点都直接复用已有实现（agents/router.route、agents/npc.generate_dialogue、
 agents/dm.dm_stream），本模块只负责"谁来调、按什么顺序调"。
@@ -21,6 +21,7 @@ from agents.dm import dm_stream
 from agents.npc import generate_dialogue
 from agents.router import route
 from models import AgentState
+from pipeline.character_extractor import is_protagonist
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,13 @@ def _router_node(state: AgentState) -> dict:
 
 
 def _route_after_router(state: AgentState) -> str:
-    """条件边：只有"对话类且指名了 NPC"才绕道 NPC 节点（省一次 LLM 调用）。"""
-    if state.get("action_category") == "dialog" and state.get("target_npc"):
+    """条件边：只有"对话类且指名了 NPC"才绕道 NPC 节点（省一次 LLM 调用）。
+
+    主角由玩家自己扮演，不是可对话的 NPC：Router 会把它当目标回填（图里是「孙悟空」，
+    它会回「悟空」），一旦放行就会反过来替玩家演出，故在此拦掉，交回 DM 正常叙述。
+    """
+    if (state.get("action_category") == "dialog" and state.get("target_npc")
+            and not is_protagonist(state["novel_id"], state["target_npc"])):
         return NODE_NPC
     return NODE_DM
 

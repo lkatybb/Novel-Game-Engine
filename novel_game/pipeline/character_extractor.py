@@ -222,6 +222,26 @@ def get_npc_profile(novel_id: str, character_name: str) -> dict:
     return profiles.get(character_name, {})
 
 
+def get_protagonist_names(novel_id: str) -> list[str]:
+    """本作主角名列表（图里 group == "主角" 的节点），缓存缺失时为空列表。
+
+    主角由玩家自己扮演，是"玩家身份"的唯一来源：既用于告诉 NPC 玩家是谁，
+    也用于禁止把主角本人当成可对话的 NPC。
+    """
+    if not _ensure_loaded(novel_id):
+        return []
+    nodes = _cache[novel_id].get("graph", {}).get("nodes", [])
+    return [n["id"] for n in nodes if n.get("id") and n.get("group") == "主角"]
+
+
+def is_protagonist(novel_id: str, name: str) -> bool:
+    """name 是否指本作主角。
+
+    兼容 LLM 用正文简称回填的情况：图里是「孙悟空」，Router 会回「悟空」。
+    """
+    return bool(name) and any(name in p for p in get_protagonist_names(novel_id))
+
+
 def get_key_events(novel_id: str) -> list[dict]:
     """
     获取关键事件清单（硬锁机制使用）

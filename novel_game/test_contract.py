@@ -11,8 +11,8 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+    full   A9/A10/A11/A14 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11/A14 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -26,6 +26,9 @@
            DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）；
            角色私聊 prompt 一个未触发事件名都不许出现、不下发 trigger_condition，
            但三个自由文本容器与已触发事件照旧可用（与 A11-1 同源的 Mask 口径）
+    A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
+           条件边拦掉主角不绕 NPC 节点（真配角照旧绕）；私聊入口对主角直接拒绝
+           且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名
     PRE-1  测试样本文件存在
     PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
@@ -473,6 +476,78 @@ def check_a11_masking():
           f"{chat_conditions}；已发生剧情/容器注入 = {containers_kept}")
 
 
+def check_player_identity():
+    """A14：离线确定性断言——玩家身份口径（调试记录①）。
+
+    Router 会把主角当成可对话的 NPC 回填（图里是「孙悟空」，它会回「悟空」），
+    放行后 NPC 节点就会替玩家演出（真实存档出现「NPC回应: …俺老孙…」）。五向锁死：
+      A14-1 主角名从关系图 group == "主角" 解析
+      A14-2 正文简称（悟空 ↔ 孙悟空）也算主角
+      A14-3 条件边拦掉主角：不绕 NPC 节点，真实配角照旧绕
+      A14-4 私聊入口对主角直接拒绝，且不发起 LLM 调用
+      A14-5 台词 prompt 与私聊 prompt 都注入 [玩家身份] 与本作主角名
+            （未触发事件名的零泄漏口径由 A11-4 守着，不在此重复）
+    """
+    import agents.graph as graph
+    import agents.npc as npc
+    import pipeline.character_extractor as ce
+    import memory.short_term as short_term
+    from memory import global_state
+
+    probe = "__a14_identity__"
+    sid = "__a14_sid__"
+    ce._cache[probe] = {"graph": {"nodes": [
+        {"id": "孙悟空", "group": "主角", "weight": 100},
+        {"id": "菩提祖师", "group": "配角", "weight": 60},
+        {"id": "通背猿猴", "group": "配角", "weight": 30},
+    ]}}
+    global_state.init_state(sid, probe)   # prompt 组装会读状态，先备一个干净会话
+    original_profile = npc.get_npc_profile
+    original_client = npc.get_llm_client
+    try:
+        names = ce.get_protagonist_names(probe)
+        check("A14-1", names == ["孙悟空"], f"关系图 group == 主角 → {names}")
+
+        yes, no = ce.is_protagonist(probe, "悟空"), ce.is_protagonist(probe, "菩提祖师")
+        check("A14-2", yes and not no,
+              f"正文简称「悟空」判为主角 = {yes}；配角「菩提祖师」判为主角 = {no}")
+
+        lead = graph._route_after_router(
+            {"novel_id": probe, "action_category": "dialog", "target_npc": "悟空"})
+        other = graph._route_after_router(
+            {"novel_id": probe, "action_category": "dialog", "target_npc": "菩提祖师"})
+        check("A14-3", lead == graph.NODE_DM and other == graph.NODE_NPC,
+              f"主角 target → {lead}（应走 DM）；配角 target → {other}（应走 NPC）")
+
+        # 拒绝必须早于 LLM：把取 client 换成炸弹，被调用即证明前置校验缺失
+        def _boom():
+            raise AssertionError("主角私聊竟发起了 LLM 调用")
+
+        npc.get_llm_client = _boom
+        try:
+            npc.chat(probe, sid, "孙悟空", "你好")
+            refused = "（没有拒绝）"
+        except ValueError as e:
+            refused = f"ValueError: {e}"
+        except AssertionError as e:
+            refused = str(e)
+        finally:
+            npc.get_llm_client = original_client
+        check("A14-4", "不能和自己私聊" in refused and "孙悟空" in refused, refused)
+
+        npc.get_npc_profile = lambda novel_id, name: {"personality": "老成持重"}
+        chat_prompt = npc.build_chat_prompt(probe, sid, "菩提祖师", "你是谁？")
+        dialogue_prompt = npc.build_dialogue_prompt(probe, sid, "菩提祖师", "上前行礼")
+        injected = all("[玩家身份]" in t and "孙悟空" in t
+                       for t in (chat_prompt, dialogue_prompt))
+        check("A14-5", injected, "台词 prompt / 私聊 prompt 均注入 [玩家身份] 与本作主角名")
+    finally:
+        npc.get_npc_profile = original_profile
+        ce._cache.pop(probe, None)
+        global_state.drop_state(sid)
+        short_term.drop(sid)
+
+
 def check_session_memory():
     """B14：N3 会话脉络（早期关键节点缓存）的离线契约。
 
@@ -793,6 +868,7 @@ def main():
     check_offline_stats()           # A12：好感度/理智度离线契约，同样不受服务状态影响
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
+    check_player_identity()         # A14：玩家身份口径（主角不当 NPC、prompt 注入身份）
     check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
