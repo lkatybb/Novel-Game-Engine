@@ -11,8 +11,8 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11/A14 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11/A14 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+    full   A9/A10/A11/A13/A14 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11/A13/A14 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -26,6 +26,8 @@
            DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）；
            角色私聊 prompt 一个未触发事件名都不许出现、不下发 trigger_condition，
            但三个自由文本容器与已触发事件照旧可用（与 A11-1 同源的 Mask 口径）
+    A13   离线四向断言：开场时间线对齐 —— 声明 order 3 补记 1/2/3；非白名单名不补记；
+           已补记不重复不越界；开场 prompt 给全清单但零 trigger_condition 泄漏
     A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
            条件边拦掉主角不绕 NPC 节点（真配角照旧绕）；私聊入口对主角直接拒绝
            且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名
@@ -346,6 +348,57 @@ def check_offline_stats():
         check("A12-5", "好感度: 3/100" in text and "理智度: 0/100" in text,
               f"format_state 注入标签：{text.splitlines()[-2:]}")
     finally:
+        global_state.drop_state(sid)
+
+
+def check_timeline_seed():
+    """A13：离线确定性断言——开场时间线对齐（调试记录②）。
+
+    开场 DM 可能从故事中段切入（检索到的是浓缩样本），它会声明"此刻之前已发生"的事件。
+    顺序闸门只放行 order <= max+1 的那一件，其余全丢 → 时间线永远冻结在 order 最小者。
+    四向锁死：
+      A13-1 声明 order 3 ⇒ 补记 1/2/3（硬锁是线性的，能到第 3 件前面必然都发生过）
+      A13-2 非白名单名字一律不补记（不猜、不兜底）
+      A13-3 已补记的不重复、不越界（再声明 order 5 ⇒ 只补 4/5）
+      A13-4 开场 prompt 给全清单，但一个 trigger_condition 都不许出现（防剧透）
+    """
+    import agents.dm as dm
+    import memory.global_state as global_state
+
+    events = [
+        {"event_name": f"事件{c}", "trigger_condition": f"TRIGGER-SECRET-{i}", "order": i}
+        for i, c in enumerate("ABCDE", 1)
+    ]
+    original_g = global_state.get_key_events
+    original_d = dm.get_key_events
+    global_state.get_key_events = lambda novel_id: events
+    dm.get_key_events = lambda novel_id: events
+
+    sid = "__a13_seed__"
+    try:
+        global_state.init_state(sid, "x")
+
+        seeded = global_state.seed_past_events(sid, ["事件C"])
+        check("A13-1", seeded == ["事件A", "事件B", "事件C"],
+              f"声明 order 3 → 补记 {seeded}")
+
+        extra = global_state.seed_past_events(sid, ["编造的事件"])
+        still = global_state.get_state(sid).triggered_events
+        check("A13-2", extra == [] and still == ["事件A", "事件B", "事件C"],
+              f"非白名单名字不补记：本次 = {extra}；已触发 = {still}")
+
+        seeded2 = global_state.seed_past_events(sid, ["事件E"])
+        check("A13-3", seeded2 == ["事件D", "事件E"],
+              f"再声明 order 5 → 只补 {seeded2}（不重复、不越界）")
+
+        prompt = dm.build_opening_prompt("x", "【原著开头片段】")
+        leaked = [e["trigger_condition"] for e in events if e["trigger_condition"] in prompt]
+        listed = all(f"{e['order']}. {e['event_name']}" in prompt for e in events)
+        check("A13-4", listed and not leaked,
+              f"开场 prompt 含全清单 = {listed}；trigger_condition 泄露 = {leaked}")
+    finally:
+        global_state.get_key_events = original_g
+        dm.get_key_events = original_d
         global_state.drop_state(sid)
 
 
@@ -868,6 +921,7 @@ def main():
     check_offline_stats()           # A12：好感度/理智度离线契约，同样不受服务状态影响
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
+    check_timeline_seed()           # A13：开场时间线对齐（前序事件补记 + 开场 prompt 防剧透）
     check_player_identity()         # A14：玩家身份口径（主角不当 NPC、prompt 注入身份）
     check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响
 

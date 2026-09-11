@@ -130,6 +130,43 @@ def trigger_event(session_id: str, event_name: str):
             state.triggered_events.append(en)
 
 
+def seed_past_events(session_id: str, declared_names) -> list[str]:
+    """把"开场时点之前原著已发生"的关键事件补记为已触发（仅开场用一次）。
+
+    开场 DM 是从故事中段切入的（检索到的是浓缩样本，未必是第一回），它会声明
+    "此刻之前已发生"的事件；但顺序闸门只放行 order <= max+1 的那一件，其余全被丢弃，
+    于是时间线永远冻结在 order 最小的那件事上，next_event 也永远是它。
+
+    硬锁保证关键事件线性发生：能声明第 k 件 ⇒ 第 1..k 件必然都已发生。
+    故按声明名里最大的 order 补齐前缀。只有白名单内的名字参与判断。
+
+    Returns: 本次实际写入的事件名（按 order 升序）；无需补记时为空列表
+    """
+    state = get_state(session_id)
+    try:
+        all_events = get_key_events(state.novel_id)
+    except Exception as e:
+        logger.warning("关键事件清单加载失败，开场补记跳过: %s", e)
+        return []
+
+    order_map = {e["event_name"]: e.get("order", 999) for e in all_events}
+    orders = [order_map[n] for n in _as_str_list(declared_names) if n in order_map]
+    if not orders:
+        return []   # 没声明、或声明的都是编造名：一律不补记（不是"猜一个"）
+
+    max_order = max(orders)
+    seeded = []
+    for e in sorted(all_events, key=lambda e: e.get("order", 999)):
+        if e.get("order", 999) > max_order:
+            break
+        if e["event_name"] not in state.triggered_events:
+            state.triggered_events.append(e["event_name"])
+            seeded.append(e["event_name"])
+    if seeded:
+        logger.info("开场补记已发生关键事件（order <= %s）: %s", max_order, seeded)
+    return seeded
+
+
 def get_untriggered_events(novel_id: str, session_id: str) -> list[dict]:
     """
     获取当前尚未触发的关键事件（按 order 排序）

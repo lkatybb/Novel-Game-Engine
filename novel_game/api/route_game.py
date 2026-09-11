@@ -9,11 +9,14 @@ logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from memory.global_state import init_state, get_state, update_state, restore_session, drop_state
+from memory.global_state import (
+    init_state, get_state, update_state, restore_session, drop_state, seed_past_events,
+)
 from memory.short_term import add as add_memory, drop as drop_memory, get as get_memory
 from memory.session_memory import drop as drop_session_memory
 from memory.long_term import retrieve, format_context
 from agents.graph import stream_graph
+from agents.dm import build_opening_prompt
 from agents.npc import chat as npc_chat
 from pipeline.prompts import DM_SYSTEM
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
@@ -102,13 +105,13 @@ async def start_game(req: StartRequest):
         retrieved = retrieve(req.novel_id, "故事开头 开场")
         long_mem = format_context(retrieved)
 
-        # LLM生成开场
+        # LLM生成开场（带完整关键事件清单，便于它判断开场落在原著哪一刻）
         client = get_llm_client()
         response = client.chat.completions.create(
             model=LLM_MODEL,
             messages=[
                 {"role": "system", "content": DM_SYSTEM},
-                {"role": "user", "content": f"游戏开始。请根据以下原著内容生成开场场景。\n\n[原著开头]\n{long_mem}\n\n请输出JSON。"},
+                {"role": "user", "content": build_opening_prompt(req.novel_id, long_mem)},
             ],
             response_format={"type": "json_object"},
             max_tokens=LLM_MAX_TOKENS,
@@ -120,9 +123,10 @@ async def start_game(req: StartRequest):
         state_changes = result.get("state_changes", {})
         if state_changes:
             update_state(session_id, state_changes)
-        # 开场只建立场景：LLM 可能在 state_changes 里提前/编造关键事件，
-        # 新游戏必须从零事件开始，强制清空（位置/物品等保留）
-        get_state(session_id).triggered_events.clear()
+        # 开场可能直接落在故事中段：DM 声明"此刻之前已发生"的事件由闸门逐个放行，
+        # 被跳序拦掉的前置事件按"线性发生"语义补齐，时间线才不会冻结在第一件事上
+        seed_past_events(session_id,
+                         state_changes.get("triggered_events") if isinstance(state_changes, dict) else None)
 
         # 开场场景信息（供前端弹场景切换窗）
         scene_obj = None

@@ -42,13 +42,15 @@
 
 取不到事件清单时放行，避免误杀。实现在 [`global_state.py`](novel_game/memory/global_state.py) 的 `_accept_triggered`。
 
-**对外只暴露「已发生」和「下一个」**：`state` 帧下发 `triggered`（已触发事件名数组）、`next_event`（仅 `event_name` + `order`，无未触发事件时为 `null`）、`total`，前端据此渲染「✓ 已触发」+「灰·下一个」两类；未触发事件的全清单与 `trigger_condition` **一律不下发**。DM Prompt 也遵守同一口径，只注入**当前待触发的这一个**事件（`memory/global_state.py` 的 `get_next_event`）—— 一次性把未触发清单塞进 Prompt，等于把后文剧情提前交给模型。
+**开场对齐（唯一例外）**：开场那一次要把**完整**清单（只有 `order` + 事件名，不含 `trigger_condition`）交给 DM（`agents/dm.py` 的 `build_opening_prompt`），否则它不知道开场落在原著哪一刻，不敢声明任何事件 —— 时间线会永远冻在 `order` 最小的那件事上。DM 声明"开场时点之前已发生"的事件后，被顺序闸门拦掉的前置事件由 `seed_past_events` 按"关键事件线性发生"补记（能声明第 k 件 ⇒ 第 1..k 件必然都发生过）。**该清单只在开场出现一次**，动作轮仍只注入 `[下一个必须发生的关键事件]`。
+
+**对外只暴露「已发生」和「下一个」**：`state` 帧下发 `triggered`（已触发事件名数组）、`next_event`（仅 `event_name` + `order`，无未触发事件时为 `null`）、`total`，前端据此渲染「✓ 已触发」+「灰·下一个」两类；未触发事件的全清单与 `trigger_condition` **一律不下发**。DM Prompt 也只注入**当前待触发的这一个**事件（`memory/global_state.py` 的 `get_next_event`）—— 一次性把未触发清单塞进 Prompt，等于把后文剧情提前交给模型。
 
 ### 3. LangGraph 多 Agent 编排
 
 ```
-START ──► router ──┬── dialog 且指名 NPC ──► npc ──► dm ──► END
-                   └── 其它 ───────────────────────► dm ──► END
+START ──► router ──┬── dialog 且指名「非主角」NPC ──► npc ──► dm ──► END
+                   └── 其它 ─────────────────────────► dm ──► END
 ```
 
 | 节点 | 职责 | 代码 |
@@ -60,7 +62,7 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 两个设计取舍：
 
 - **没有独立的 Rules 节点。** 初版架构里 Router 和 Rules 是两个节点，实测多一次 LLM 往返延迟明显，合并进 Router 的判定结果（见 [`PRD.md`](PRD.md) 第 8 节风险表）。
-- **条件边省一次调用。** 只有"对话类且指名了 NPC"才绕道 `npc` 节点，其余动作直连 `dm`。
+- **条件边省一次调用。** 只有"对话类且指名了 NPC"才绕道 `npc` 节点，其余动作直连 `dm`。**主角例外**：玩家扮演的就是主角本人，Router 会把正文里的名字当成对话目标回填（图里是「孙悟空」，它会回「悟空」），放行后 `npc` 节点会反过来替玩家演出。条件边用 `pipeline/character_extractor.is_protagonist` 拦掉主角，交回 `dm` 正常叙述；`npc.chat` 的私聊入口也拒绝主角本人。
 
 **流式与图不冲突**：`dm` 节点内部用 `get_stream_writer()` 把 LLM 逐 token 的产出实时推出图外，所以走 StateGraph 不会牺牲打字机效果。CLI 和 Web 共用同一张图，行为一致（公开入口 `stream_graph` / `run_graph`）。
 
@@ -94,6 +96,7 @@ START ──► router ──┬── dialog 且指名 NPC ──► npc ──
 - **防剧透复用同一套 Mask 口径**：只给「三个自由文本容器（`player_location` / `flags` / `inventory`）+ 已触发事件 + 主角近 5 轮短期记忆」，未触发事件清单、`trigger_condition`、甚至 `next_event` 都**不注入** —— 角色不承担推进主线的责任，它没有理由知道后文。实现在 [`agents/npc.py`](novel_game/agents/npc.py) 的 `build_chat_prompt`。
 - **对话历史不落盘**：由前端持有并随请求回传（最多 6 条 / 单条 ≤ 200 字），服务端不做会话存储，因此不产生新的孤儿数据、也不需要额外的清理链路。
 - 角色没有人设档案时直接返回 404，**不硬编人设**（不兜底）。
+- **玩家身份明写**：prompt 里有一段 `[玩家身份]`，告诉角色"玩家就是本作主角本人、正文里的『你』指玩家"（主角名来自关系图的 `group == "主角"` 节点）。没有这段，角色会把玩家当旁人、甚至用第三人称谈论玩家。**主角本人不能私聊** —— `npc.chat` 直接 `ValueError`（前端 404 文案），因为那是玩家自己（对应离线断言 A14）。
 
 ---
 

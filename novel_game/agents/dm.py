@@ -5,12 +5,39 @@ import logging
 import re
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
 from pipeline.prompts import DM_SYSTEM
+from pipeline.character_extractor import get_key_events
 from memory.short_term import format_memory
 from memory.global_state import format_state, get_next_event
 from memory.long_term import retrieve, format_context
 from memory.session_memory import format_early_nodes, record_turn
 
 logger = logging.getLogger(__name__)
+
+
+def build_opening_prompt(novel_id: str, long_mem: str) -> str:
+    """组装开场 prompt（只调一次，动作轮不走这里）。
+
+    与动作轮的关键区别：开场要把**完整**关键事件清单（只有 order + 名称）交给 DM，
+    否则它不知道"原著此刻之前发生过什么"，就不敢声明任何事件，时间线永远冻在第一件。
+    trigger_condition 一律不给——那是"何时该发生"，开场也不需要。
+    """
+    events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
+    checklist = "\n".join(f"  {e.get('order', 999)}. {e['event_name']}" for e in events)
+    if not checklist:
+        checklist = "（本书未提取到关键事件）"
+
+    return f"""游戏开始。请根据以下原著内容生成开场场景。
+
+[原著开头]
+{long_mem}
+
+[原著关键事件清单]（按原著顺序）
+{checklist}
+
+state_changes.triggered_events 里只列**开场时点之前**原著中已经发生的事件名，
+未发生的一律不写、不要提前触发；正文也不得叙述清单里尚未发生的事。
+
+请输出JSON。"""
 
 
 def _build_prompt(session_id: str, novel_id: str, player_action: str) -> str:
