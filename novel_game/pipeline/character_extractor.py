@@ -2,8 +2,18 @@
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from config import LLM_MODEL, get_llm_client, CHARACTER_CACHE_DIR
+
+from config import (
+    CHARACTER_CACHE_DIR,
+    EXTRACT_MAX_EVENTS,
+    EXTRACT_MAX_NODES,
+    EXTRACT_SAMPLE_CHARS,
+    EXTRACT_SEGMENT_CHARS,
+    LLM_MODEL,
+    get_llm_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,36 +128,74 @@ def _extract_player_stats(text_sample: str, protagonist: str) -> list[dict]:
     return cleaned
 
 
-def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) -> dict:
+_EVENT_QUOTA_MAX = 15   # 单段事件条数上限（= 旧口径的"5-15 个"，单段书与旧行为一致）
+_EVENT_QUOTA_MIN = 3    # 单段事件条数下限（段数再多也要给每段留出记录骨架的机会）
+_PROFILE_LIMIT = 10     # 每段最多生成人设的角色数（= 旧口径的"最多取前10个"）
+
+
+def _split_segments(text: str) -> list[str]:
+    """按 EXTRACT_SEGMENT_CHARS 把全文切段；不足一段就是一段（单段书与旧口径一致）"""
+    if len(text) <= EXTRACT_SEGMENT_CHARS:
+        return [text]
+    return [text[i:i + EXTRACT_SEGMENT_CHARS]
+            for i in range(0, len(text), EXTRACT_SEGMENT_CHARS)]
+
+
+def _sample_of(block: str) -> str:
+    """取段首 EXTRACT_SAMPLE_CHARS 字做样本。
+
+    覆盖度靠"每段都抽"，不靠"每段抽更多"：样本长度必须等于旧口径的 8000 字，
+    否则单段书的结果会跟着变。
     """
-    从小说文本中提取人物关系和NPC人设
+    return block[:EXTRACT_SAMPLE_CHARS]
 
-    Args:
-        novel_id: 小说ID
-        novel_text: 小说全文（或前N字）
-        max_chars: 最多分析的字符数
 
-    Returns:
-        {
-            "graph": {"nodes": [...], "links": [...]},
-            "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...},
-            "key_events": [{"event_name", "trigger_condition", "order", "key_characters"}, ...],
-            "player_stats": [{"name", "desc", "init"}, ...]
-        }
+def _event_quota(segment_count: int) -> int:
+    """每段的事件条数上限：全书目标量按段数均分，再夹到 [_EVENT_QUOTA_MIN, _EVENT_QUOTA_MAX]。
+
+    单段书 = 15（与旧口径一致）；段数越多每段越少，全书总量不随篇幅线性膨胀。
     """
-    # 检查缓存（内存 → 磁盘）
-    if novel_id in _cache:
-        return _cache[novel_id]
-    disk_data = _load_from_disk(novel_id)
-    if disk_data:
-        _cache[novel_id] = disk_data
-        logger.info("从磁盘加载人物缓存: novel_id=%s", novel_id)
-        return disk_data
+    return min(_EVENT_QUOTA_MAX,
+               max(_EVENT_QUOTA_MIN, -(-EXTRACT_MAX_EVENTS // segment_count)))
 
-    # 截取前N字（人物通常在开头出场）
-    text_sample = novel_text[:max_chars]
 
-    # ---- 第一步：提取人物关系图 ----
+def _weight_of(node: dict) -> float:
+    """节点戏份权重：prompt 约定为 1-100 的数字，非数字按 0 处理（等价于最不重要）。
+
+    必须按数值处理：截断与主角唯一化都拿它排序，把 88.5 这种小数当成 0 会让
+    重要节点被误截掉。
+    """
+    weight = node.get("weight", 0)
+    return weight if isinstance(weight, (int, float)) else 0
+
+
+def _apply_protagonist_rule(nodes: list[dict], allow_protagonist: bool) -> str:
+    """按主角口径就地改写 group，返回本段主角名（无则空串）。
+
+    主角是玩家的身份来源，"玩家是谁"只能有一个答案：图上出现两个「主角」，
+    NPC 台词与私聊拦截就会打架。
+    - allow_protagonist=False（第 1 段之后）：本段所有「主角」降级为「配角」。
+      主角只在初次登场那一段声明；后面的段落把主角和旁人混着标，再声明一次
+      就会在合并后的图上多出一个同名主角。
+    - allow_protagonist=True（第 1 段）：最多只留一个「主角」，取 weight 最高的那个，
+      其余降级为「配角」（LLM 常把双主角都标成主角）。
+    """
+    leads = [n for n in nodes if n.get("id") and n.get("group") == "主角"]
+    if not allow_protagonist:
+        for n in leads:
+            n["group"] = "配角"
+        return ""
+    if not leads:
+        return ""
+    keep = max(leads, key=_weight_of)
+    for n in leads:
+        if n is not keep:
+            n["group"] = "配角"
+    return str(keep["id"])
+
+
+def _extract_graph(sample: str) -> dict:
+    """第一步：提取人物关系图（nodes + links）"""
     graph_prompt = """你是一个小说分析专家。分析以下小说文本，提取所有出现的人物，以及人物之间的关系。
 
 输出JSON格式：
@@ -166,15 +214,20 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
 - 只提取有名字的角色，不要提取泛称"""
 
     logger.info("开始提取人物关系...")
-    graph_result = _llm_call(graph_prompt, text_sample)
-    graph_data = json.loads(graph_result)
+    graph_data = json.loads(_llm_call(graph_prompt, sample))
+    return {
+        "nodes": graph_data.get("nodes", []),
+        "links": graph_data.get("links", []),
+    }
 
-    # ---- 第二步：提取NPC人设档案 ----
-    character_names = [n["id"] for n in graph_data.get("nodes", [])][:10]  # 最多取前10个角色
 
+def _extract_profiles(sample: str, names: list[str]) -> dict:
+    """第二步：为本段出现的角色生成人设档案；名单为空则不发调用（省一次无用开销）"""
+    if not names:
+        return {}
     npc_prompt = f"""你是小说分析专家。根据以下小说文本，为这些角色生成人设档案。
 
-角色列表：{", ".join(character_names)}
+角色列表：{", ".join(names)}
 
 为每个角色输出JSON：
 {{
@@ -186,12 +239,19 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
   }}
 }}"""
 
-    logger.info("开始提取NPC人设档案...")
-    npc_result = _llm_call(npc_prompt, text_sample)
-    npc_profiles = json.loads(npc_result)
+    logger.info("开始提取NPC人设档案（本段 %d 个角色）...", len(names))
+    return json.loads(_llm_call(npc_prompt, sample))
 
-    # ---- 第三步：提取关键事件清单（硬锁机制） ----
-    key_events_prompt = """你是小说分析专家。分析以下小说文本，提取出**必须发生**的关键事件——这些事件是故事主线的骨架，无论玩家怎么行动，这些事件都必须在正确的时机发生。
+
+def _extract_events(sample: str, quota: int) -> list[dict]:
+    """第三步：提取关键事件清单（硬锁机制）。
+
+    quota 是本段的事件条数上限：单段书 = 15（与旧口径一致），段数越多每段越少。
+    order 在本段内成立即可，跨段的全局顺序由 _merge_segment_events 重新编号。
+    """
+    count_rule = ("提取 5-15 个关键事件，不要太多也不要太少" if quota >= _EVENT_QUOTA_MAX
+                  else f"提取不超过 {quota} 个关键事件——本段只是全书的一部分，只挑真正的骨架")
+    key_events_prompt = f"""你是小说分析专家。分析以下小说文本，提取出**必须发生**的关键事件——这些事件是故事主线的骨架，无论玩家怎么行动，这些事件都必须在正确的时机发生。
 
 判断标准：
 - 去掉了这个事件，故事主线就不成立了
@@ -202,37 +262,159 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
 不要提取：日常对话、琐碎互动、非主线支线。
 
 输出JSON格式：
-{
+{{
   "events": [
-    {
+    {{
       "event_name": "简短事件名（如'拜师菩提'）",
       "trigger_condition": "触发条件（如'悟空在斜月三星洞待了一段时间，祖师要教他真本事时'）",
       "order": 1,
       "key_characters": ["悟空", "菩提祖师"]
-    }
+    }}
   ]
-}
+}}
 
 要求：
-- order 按事件在故事中**必须发生的先后顺序**编号（1=最先发生）
-- 提取 5-15 个关键事件，不要太多也不要太少
+- order 按事件在本段中**必须发生的先后顺序**编号（1=本段最先发生）
+- {count_rule}
 - event_name 用简洁的中文短语，后续会直接用作 DM Prompt 中的事件标识"""
 
-    logger.info("开始提取关键事件清单...")
-    events_result = _llm_call(key_events_prompt, text_sample)
-    key_events = json.loads(events_result).get("events", [])
+    logger.info("开始提取关键事件清单（本段上限 %d 条）...", quota)
+    events = json.loads(_llm_call(key_events_prompt, sample)).get("events", [])
     # 补齐必要字段；order 交给 normalize_event_orders 归一化为稠密 1..N（硬锁门槛依赖稠密序）
-    for e in key_events:
+    for e in events:
         e.setdefault("trigger_condition", "")
         e.setdefault("key_characters", [])
-    key_events = normalize_event_orders(key_events)
+    return events
 
-    # ---- 第四步：提取本书主角的属性维度（属性由书决定，非固定四维） ----
-    protagonist = next((n["id"] for n in graph_data.get("nodes", [])
-                        if n.get("id") and n.get("group") == "主角"), "")
 
+def _merge_graph(graphs: list[dict]) -> dict:
+    """合并各段关系图：节点按 id 去重（weight 取最大、group 以首段为准），
+    边按 (source, target) 去重（先出现者胜：同一对人物只留一条关系），
+    最后按 weight 降序截断到 EXTRACT_MAX_NODES。
+
+    被截断的节点，它的边一并丢弃——D3 的 forceLink 在图上找不到端点会整张图渲染失败。
+    """
+    nodes: dict[str, dict] = {}
+    links: list[dict] = []
+    seen_links: set[tuple[str, str]] = set()
+
+    for graph in graphs:
+        for n in graph.get("nodes", []):
+            node_id = str(n.get("id", "")).strip()
+            if not node_id:
+                continue
+            if node_id in nodes:
+                nodes[node_id]["weight"] = max(nodes[node_id]["weight"], _weight_of(n))
+            else:
+                nodes[node_id] = {"id": node_id, "weight": _weight_of(n),
+                                  "group": n.get("group") or ""}
+        for link in graph.get("links", []):
+            source = str(link.get("source", "")).strip()
+            target = str(link.get("target", "")).strip()
+            if not source or not target or (source, target) in seen_links:
+                continue
+            seen_links.add((source, target))
+            links.append({"source": source, "target": target,
+                          "relation": link.get("relation", ""), "type": link.get("type", "")})
+
+    kept = sorted(nodes.values(), key=lambda n: (-n["weight"], n["id"]))[:EXTRACT_MAX_NODES]
+    alive = {n["id"] for n in kept}
+    return {"nodes": kept,
+            "links": [l for l in links if l["source"] in alive and l["target"] in alive]}
+
+
+def _merge_profiles(chunks: list[dict]) -> dict:
+    """合并各段人设档案：同一角色多段都写了 → 最早出现的段胜出。
+
+    人设是"人物初次登场时的设定"，后段再写一遍多半是顺着剧情重述，越靠后越可能
+    掺进剧透（secret 字段尤其危险）。
+    """
+    merged: dict = {}
+    for profiles in chunks:
+        for name, profile in profiles.items():
+            merged.setdefault(name, profile)
+    return merged
+
+
+def _merge_segment_events(chunks: list[list[dict]]) -> list[dict]:
+    """按段序拼接事件并稠密重编号 1..N。
+
+    LLM 每段都从 order=1 开始编号，直接拼会互相插队；所以先理清段内顺序，再按段序
+    统一编号，最终 order 与"故事里第几段发生"一致。
+    """
+    merged: list[dict] = []
+    for events in chunks:
+        for e in normalize_event_orders(events):
+            merged.append(dict(e, order=len(merged) + 1))
+    return merged
+
+
+def extract_characters(novel_id: str, novel_text: str,
+                       on_progress: Callable[[int, int], None] | None = None) -> dict:
+    """从小说全文中提取人物关系、NPC人设、关键事件与主角属性。
+
+    大文件按 EXTRACT_SEGMENT_CHARS 分段，每段只取段首 EXTRACT_SAMPLE_CHARS 字做样本：
+    只吃全书开头的话，100 万字的书有 99.2% 的内容永远进不了人物图。分段后每段都有
+    自己的样本，中后段才出场的角色同样能进图。
+
+    Args:
+        novel_id: 小说ID
+        novel_text: 小说全文
+        on_progress: 每完成一段回调 (done, total)
+
+    Returns:
+        {
+            "graph": {"nodes": [...], "links": [...]},
+            "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...},
+            "key_events": [{"event_name", "trigger_condition", "order", "key_characters"}, ...],
+            "player_stats": [{"name", "desc", "init"}, ...]
+        }
+    """
+    # 检查缓存（内存 → 磁盘）
+    if novel_id in _cache:
+        return _cache[novel_id]
+    disk_data = _load_from_disk(novel_id)
+    if disk_data:
+        _cache[novel_id] = disk_data
+        logger.info("从磁盘加载人物缓存: novel_id=%s", novel_id)
+        return disk_data
+
+    segments = _split_segments(novel_text)
+    quota = _event_quota(len(segments))
+    logger.info("人物提取分段：%d 段，每段样本 %d 字，每段事件上限 %d 条",
+                len(segments), EXTRACT_SAMPLE_CHARS, quota)
+
+    graphs: list[dict] = []
+    profile_chunks: list[dict] = []
+    event_chunks: list[list[dict]] = []
+    protagonist = ""
+
+    for index, block in enumerate(segments):
+        sample = _sample_of(block)
+
+        graph = _extract_graph(sample)
+        # 主角只在第 1 段声明，且第 1 段内也只留一个；必须在合并前就地改好
+        lead = _apply_protagonist_rule(graph["nodes"], allow_protagonist=index == 0)
+        if index == 0:
+            protagonist = lead
+        graphs.append(graph)
+
+        # 人设名单用本段自己的角色，去掉主角（主角由玩家扮演，不需要人设档案）
+        names = [n["id"] for n in graph["nodes"]
+                 if n.get("id") and n.get("group") != "主角"][:_PROFILE_LIMIT]
+        profile_chunks.append(_extract_profiles(sample, names))
+        event_chunks.append(_extract_events(sample, quota))
+
+        if on_progress:
+            on_progress(index + 1, len(segments))
+
+    graph_data = _merge_graph(graphs)
+    npc_profiles = _merge_profiles(profile_chunks)
+    key_events = _merge_segment_events(event_chunks)
+
+    # ---- 第四步：提取本书主角的属性维度（属性由书决定，非固定四维；只用开头那段样本） ----
     logger.info("开始提取主角属性维度...")
-    player_stats = _extract_player_stats(text_sample, protagonist)
+    player_stats = _extract_player_stats(_sample_of(segments[0]), protagonist)
 
     # 缓存（内存 + 磁盘）
     result = {
@@ -245,8 +427,8 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
     _save_to_disk(novel_id, result)
 
     logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性",
-                len(graph_data.get("nodes", [])),
-                len(graph_data.get("links", [])),
+                len(graph_data["nodes"]),
+                len(graph_data["links"]),
                 len(key_events),
                 len(player_stats))
 

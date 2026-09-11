@@ -11,8 +11,8 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11/A12/A13/A14/A15 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11/A12/A13/A14/A15 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+    full   A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -36,6 +36,11 @@
     A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
            条件边拦掉主角不绕 NPC 节点（真配角照旧绕）；私聊入口对主角直接拒绝
            且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名
+    A16   离线七向断言：人物分段提取 —— 抽样覆盖到第 2 段（20 万字以上的书不再只吃开头）；
+           节点去重取最大 weight、边去重先出现者胜、主角唯一；人设取最早段；
+           事件 order 跨段按段序稠密 1..N；单段书与旧口径一致（样本 8000 字、
+           事件上限 15、主角属性只调 1 次）；节点数超上限按 weight 截断且不留悬空边；
+           合并结果 4 个顶层 key 与元素字段逐字未变
     PRE-1  测试样本文件存在
     PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
@@ -74,9 +79,9 @@ BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 ROOT = Path(__file__).resolve().parent
 
 # 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
-#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11/A12/A13/A14/A15 + B14 + PRE-1~3
+#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11/A12/A13/A14/A15/A16 + B14 + PRE-1~3
 #            + A6 + A1-A5/A8 + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
-#   delete = 删除能力快层（迭代替换用）：A9/A10/A11/A12/A13/A14/A15 + B14 + PRE-1~3
+#   delete = 删除能力快层（迭代替换用）：A9/A10/A11/A12/A13/A14/A15/A16 + B14 + PRE-1~3
 #            + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、
 #            /resume 的 A7 与最贵的 B8
 # 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
@@ -666,6 +671,193 @@ def check_player_identity():
         short_term.drop(sid)
 
 
+def check_character_segments():
+    """A16：人物分段提取离线契约（大文件只吃开头 8000 字的修复）。
+
+    假 _llm_call 按 prompt 分派，并把"每段样本"回灌进图/人设/事件，用样本首二字标识
+    这段落在全书的哪个位置；不联网、不掷骰子，纯结构化断言。
+      A16-1 抽样覆盖到第 2 段（20 万字以上的书不再只吃开头）
+      A16-2 节点去重（weight 取最大）、边去重（先出现者胜）、主角唯一
+      A16-3 同一角色多段人设 → 最早段胜出
+      A16-4 事件 order 跨段按段序稠密 1..N
+      A16-5 单段书与旧口径一致：样本 = 前 8000 字、事件上限 15、主角属性只调 1 次
+      A16-6 节点数超上限时按 weight 截断，且不留悬空边
+      A16-7 合并结果 4 个顶层 key 与元素字段与旧结构逐字一致
+    """
+    import pipeline.character_extractor as ce
+
+    probe = "__a16_segments__"
+    single_probe = "__a16_single__"
+    calls: list[dict] = []
+
+    def _fake_llm(system_prompt: str, sample: str) -> str:
+        if "提取所有出现的人物" in system_prompt:
+            step = "graph"
+        elif "为这些角色生成人设档案" in system_prompt:
+            step = "profiles"
+        elif "必须发生" in system_prompt:
+            step = "events"
+        else:
+            step = "stats"
+        calls.append({"step": step, "sample": sample, "prompt": system_prompt})
+
+        if step == "graph":
+            if sample.startswith("开头"):
+                return json.dumps({"nodes": [
+                    {"id": "孙悟空", "weight": 95, "group": "主角"},
+                    {"id": "唐僧", "weight": 80, "group": "主角"},
+                    {"id": "菩提祖师", "weight": 60, "group": "配角"},
+                ], "links": [
+                    {"source": "孙悟空", "target": "菩提祖师",
+                     "relation": "师徒", "type": "师徒"},
+                    {"source": "唐僧", "target": "孙悟空", "relation": "师徒", "type": "师徒"},
+                ]})
+            # 第 2 段：重复节点（weight 更小）、重复边（关系不同）、把主角重新标成主角
+            return json.dumps({"nodes": [
+                {"id": "孙悟空", "weight": 88, "group": "主角"},
+                {"id": "白骨精", "weight": 70, "group": "主角"},
+                {"id": "菩提祖师", "weight": 40, "group": "配角"},
+            ], "links": [
+                {"source": "孙悟空", "target": "菩提祖师",
+                 "relation": "反目", "type": "敌对"},
+                {"source": "白骨精", "target": "孙悟空", "relation": "敌对", "type": "敌对"},
+            ]})
+        if step == "profiles":
+            if sample.startswith("开头"):
+                return json.dumps({"唐僧": {"personality": "首段人设", "secret": "首段秘密",
+                                            "speech_style": "文雅", "goal": "取经"}})
+            return json.dumps({"唐僧": {"personality": "次段人设", "secret": "次段秘密",
+                                        "speech_style": "粗犷", "goal": "成佛"},
+                               "白骨精": {"personality": "次段人设", "secret": "无",
+                                          "speech_style": "阴柔", "goal": "长生"}})
+        if step == "events":
+            if sample.startswith("开头"):
+                # 故意倒序声明：段内必须先理序再编号
+                return json.dumps({"events": [
+                    {"event_name": "拜师菩提", "trigger_condition": "祖师要教真本事",
+                     "order": 2, "key_characters": ["孙悟空"]},
+                    {"event_name": "出山", "trigger_condition": "学成本领",
+                     "order": 1, "key_characters": ["孙悟空"]},
+                ]})
+            return json.dumps({"events": [
+                {"event_name": "三打白骨精", "trigger_condition": "白骨精三次变化",
+                 "order": 1, "key_characters": ["孙悟空", "白骨精"]},
+            ]})
+        return json.dumps({"stats": [{"name": "神通", "desc": "法术本领", "init": 60}]})
+
+    # 212,000 字 → 2 段；段 1 的样本是"开头…"，段 2 的样本是"尾部…"
+    head, middle, tail = "开头" * 4000, "中段" * 96000, "尾部" * 6000
+    long_text = head + middle + tail
+    single_text = "短" * 30000
+
+    original_llm_call = ce._llm_call
+    try:
+        ce._llm_call = _fake_llm
+        ce.drop_cache(probe)
+        ce.drop_cache(single_probe)
+
+        result = ce.extract_characters(probe, long_text)
+
+        # ---- A16-1：每段都有自己的样本，第 2 次抽样来自第 2 段开头 ----
+        samples = [c["sample"] for c in calls if c["step"] == "graph"]
+        expect_second = long_text[ce.EXTRACT_SEGMENT_CHARS:ce.EXTRACT_SEGMENT_CHARS
+                                  + ce.EXTRACT_SAMPLE_CHARS]
+        check("A16-1",
+              len(samples) == 2 and samples[0] == head and samples[1] == expect_second,
+              f"{len(samples)} 段各有样本，第 2 段样本取自第 {ce.EXTRACT_SEGMENT_CHARS} 字之后"
+              f"（{samples[1][:2] if len(samples) > 1 else '缺'}…）")
+
+        # ---- A16-2：去重口径 + 主角唯一 ----
+        nodes = {n["id"]: n for n in result["graph"]["nodes"]}
+        links = {(l["source"], l["target"]): l for l in result["graph"]["links"]}
+        leads = ce.get_protagonist_names(probe)
+        demoted = {k: v for k, v in (("唐僧", "配角"), ("白骨精", "配角"))}
+        check("A16-2",
+              leads == ["孙悟空"]
+              and nodes.get("孙悟空", {}).get("weight") == 95
+              and nodes.get("菩提祖师", {}).get("weight") == 60
+              and all(nodes.get(k, {}).get("group") == v for k, v in demoted.items())
+              and links.get(("孙悟空", "菩提祖师"), {}).get("relation") == "师徒"
+              and len(result["graph"]["links"]) == 3,
+              f"主角 = {leads}（首段多主角只留 1 个、次段主角降级）；"
+              f"孙悟空 weight = {nodes.get('孙悟空', {}).get('weight')}（取两段最大）；"
+              f"重复边关系 = {links.get(('孙悟空', '菩提祖师'), {}).get('relation')}"
+              f"（先出现者胜）；边数 = {len(result['graph']['links'])}")
+
+        # ---- A16-3：同一角色多段人设，最早段胜出 ----
+        profiles = result["npc_profiles"]
+        check("A16-3",
+              profiles.get("唐僧", {}).get("personality") == "首段人设"
+              and profiles.get("唐僧", {}).get("secret") == "首段秘密"
+              and "白骨精" in profiles,
+              f"唐僧人设 = {profiles.get('唐僧', {}).get('personality')!r}（最早段胜出）；"
+              f"仅次段出场的角色仍入库 = {'白骨精' in profiles}")
+
+        # ---- A16-4：跨段 order 按段序稠密 ----
+        events = [(e["event_name"], e["order"]) for e in result["key_events"]]
+        check("A16-4", events == [("出山", 1), ("拜师菩提", 2), ("三打白骨精", 3)],
+              f"跨段 order = {events}（段内先理序，再按段序稠密 1..N）")
+
+        # ---- A16-5：单段书与旧口径逐项一致 ----
+        calls.clear()
+        ce.extract_characters(single_probe, single_text)
+        single = {step: [c for c in calls if c["step"] == step]
+                  for step in ("graph", "events", "stats")}
+        sample_ok = (len(single["graph"]) == 1
+                     and single["graph"][0]["sample"] == single_text[:ce.EXTRACT_SAMPLE_CHARS])
+        quota_ok = (len(single["events"]) == 1
+                    and "提取 5-15 个关键事件" in single["events"][0]["prompt"])
+        check("A16-5",
+              sample_ok and quota_ok and len(single["stats"]) == 1,
+              f"单段书：抽样 {len(single['graph'])} 次"
+              f"（样本 {len(single['graph'][0]['sample']) if single['graph'] else 0} 字）、"
+              f"事件上限沿用旧口径 = {quota_ok}、主角属性调用 {len(single['stats'])} 次")
+
+        # ---- A16-6：节点超上限按 weight 截断，且不留悬空边 ----
+        heavy = {
+            "nodes": [{"id": f"角色{i:02d}", "weight": i, "group": "配角"}
+                      for i in range(1, 71)],
+            "links": [
+                {"source": "角色01", "target": "角色70", "relation": "敌对", "type": "敌对"},
+                {"source": "角色70", "target": "角色69", "relation": "盟友", "type": "盟友"},
+                {"source": "角色69", "target": "角色68", "relation": "盟友", "type": "盟友"},
+            ],
+        }
+        merged = ce._merge_graph([heavy])
+        kept_ids = {n["id"] for n in merged["nodes"]}
+        dangling = [l for l in merged["links"]
+                    if l["source"] not in kept_ids or l["target"] not in kept_ids]
+        check("A16-6",
+              len(merged["nodes"]) == ce.EXTRACT_MAX_NODES
+              and min(n["weight"] for n in merged["nodes"]) == 11
+              and not dangling and len(merged["links"]) == 2,
+              f"70 个节点截断到 {len(merged['nodes'])} 个（留下的最小 weight = 11）；"
+              f"悬空边 {len(dangling)} 条（指向被截节点的边一并丢弃）")
+
+        # ---- A16-7：结构契约与 getter 消费口径逐字未变 ----
+        cache_file = ce._cache_path(probe)
+        cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
+        check("A16-7",
+              set(result) == {"graph", "npc_profiles", "key_events", "player_stats"}
+              and set(result["graph"]) == {"nodes", "links"}
+              and all(set(n) == {"id", "weight", "group"} for n in result["graph"]["nodes"])
+              and all(set(l) == {"source", "target", "relation", "type"}
+                      for l in result["graph"]["links"])
+              and all(set(e) == {"event_name", "trigger_condition", "order", "key_characters"}
+                      for e in result["key_events"])
+              and all(set(s) == {"name", "desc", "init"} for s in result["player_stats"])
+              and set(cached) == set(result)
+              and ce.get_graph_data(probe) == result["graph"]
+              and ce.get_key_events(probe) == result["key_events"]
+              and ce.get_player_stats(probe) == result["player_stats"]
+              and ce.get_npc_profile(probe, "唐僧") == profiles["唐僧"],
+              "4 个顶层 key 与元素字段逐字未变；磁盘缓存与 getter 读到的结构一致")
+    finally:
+        ce._llm_call = original_llm_call
+        ce.drop_cache(probe)
+        ce.drop_cache(single_probe)
+
+
 def check_session_memory():
     """B14：N3 会话脉络（早期关键节点缓存）的离线契约。
 
@@ -989,6 +1181,7 @@ def main():
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
     check_timeline_seed()           # A13：开场时间线对齐（前序事件补记 + 开场 prompt 防剧透）
     check_player_identity()         # A14：玩家身份口径（主角不当 NPC、prompt 注入身份）
+    check_character_segments()      # A16：人物分段提取（大文件只吃开头 8000 字的修复）
     check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
