@@ -70,13 +70,18 @@ const app = {
  * 1. 工具函数
  * -------------------------------------------------------------------------- */
 
-/** Toast 轻提示（2.6s 自动消失） */
+/** Toast 轻提示（2.6s 自动消失）；sticky=true 时一直挂着，直到被下一次 toast 或 hideToast 顶掉 */
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, sticky = false) {
   dom.toast.textContent = msg;
   dom.toast.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => dom.toast.classList.remove('show'), 2600);
+  if (!sticky) toastTimer = setTimeout(() => dom.toast.classList.remove('show'), 2600);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  dom.toast.classList.remove('show');
 }
 
 /** 统一 JSON 请求封装：非 2xx 抛错并携带后端 detail */
@@ -359,7 +364,8 @@ function clearStage() {
 /** 开始新游戏 */
 async function startGame(novelId, title) {
   try {
-    toast('正在生成开场…');
+    // /start 内含 LLM 调用（冷启动可达 40s+），sticky 让提示一直挂到出结果
+    toast('正在生成开场…', true);
     const data = await api('/api/game/start', {
       method: 'POST',
       body: { novel_id: novelId },
@@ -374,6 +380,7 @@ async function startGame(novelId, title) {
     app.pendingChoices = Array.isArray(data.choices) ? data.choices : null;
     appendSegment('scene', '', data.story || data.opening || '故事开始了。');
     app.pager.done = true;                // 非流式：内容已齐，播放器自行播完出选项
+    hideToast();
   } catch (e) {
     toast(`开始失败：${e.message}`);
   }
@@ -382,6 +389,8 @@ async function startGame(novelId, title) {
 /** 恢复历史会话（契约：POST /api/game/resume {session_id}） */
 async function resumeGame(sessionId, novelId, title) {
   try {
+    // /resume 内含一次 LLM 调用（冷启动可达 40s+），sticky 让提示一直挂到出结果
+    toast('正在恢复上次进度…', true);
     const data = await api('/api/game/resume', {
       method: 'POST',
       body: { session_id: sessionId },
