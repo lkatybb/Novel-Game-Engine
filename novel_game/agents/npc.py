@@ -2,8 +2,8 @@
 
 import json
 from config import LLM_MODEL, get_llm_client
-from pipeline.prompts import NPC_SYSTEM, NPC_CHAT_SYSTEM
-from pipeline.character_extractor import get_npc_profile, get_protagonist_names, is_protagonist
+from pipeline.prompts import NPC_SYSTEM, NPC_CHAT_SYSTEM, player_identity
+from pipeline.character_extractor import get_npc_profile, is_protagonist
 from memory.global_state import format_state
 from memory.short_term import format_memory
 
@@ -11,17 +11,6 @@ from memory.short_term import format_memory
 _NPC_MAX_TOKENS = 512
 _CHAT_HISTORY_LIMIT = 6      # 只带最近 3 个来回，避免客户端塞长文拖慢推理
 _CHAT_TEXT_LIMIT = 200       # 单条对话文本上限
-
-
-def _player_identity(novel_id: str) -> str:
-    """玩家身份段：告诉 NPC 玩家就是本作主角本人。
-
-    台词与私聊共用同一口径——否则 NPC 会把玩家当旁人，甚至反过来扮演玩家本人。
-    """
-    names = "、".join(get_protagonist_names(novel_id))
-    who = f"「{names}」" if names else ""
-    return (f"[玩家身份]\n玩家扮演本作主角{who}本人，正文里的“你”就是玩家。"
-            "不要用第三人称谈论玩家，也不要把玩家当成别的角色。")
 
 
 def build_dialogue_prompt(novel_id: str, session_id: str, npc_name: str,
@@ -35,7 +24,7 @@ def build_dialogue_prompt(novel_id: str, session_id: str, npc_name: str,
 说话风格: {profile.get('speech_style', '正常')}
 核心目标: {profile.get('goal', '未知')}
 
-{_player_identity(novel_id)}
+{player_identity(novel_id)}
 
 [当前状态]
 {format_state(session_id)}
@@ -94,7 +83,7 @@ def build_chat_prompt(novel_id: str, session_id: str, npc_name: str, message: st
 说话风格: {profile.get('speech_style', '正常')}
 核心目标: {profile.get('goal', '未知')}
 
-{_player_identity(novel_id)}
+{player_identity(novel_id)}
 
 [已知剧情]
 {format_memory(session_id)}

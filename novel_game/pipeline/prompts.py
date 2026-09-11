@@ -1,5 +1,19 @@
 """所有Agent的Prompt模板"""
 
+from pipeline.character_extractor import get_protagonist_names
+
+
+def player_identity(novel_id: str) -> str:
+    """玩家身份段：DM 与 NPC 共用同一口径，谁都不许把玩家当成别的角色。
+
+    老书缓存里没抽到主角名时只保留后半句约束，不编造名字（数据缺失的自然结果）。
+    """
+    names = "、".join(get_protagonist_names(novel_id))
+    who = f"「{names}」" if names else ""
+    return (f"[玩家身份]\n玩家扮演本作主角{who}本人，正文里的“你”就是玩家。"
+            "不要用第三人称谈论玩家，也不要把玩家当成别的角色。")
+
+
 # DM Agent 的 System Prompt
 DM_SYSTEM = """你是一个文字冒险游戏的DM（地下城主）。
 
@@ -54,6 +68,7 @@ NPC对玩家的态度（好感/警惕/敌意）可随互动变化，影响台词
 - 开场首轮必须返回 scene。
 
 你收到的信息包含：
+- [玩家身份] 玩家扮演的是谁（本作主角本人）
 - [原著关键事件清单] 本作全部关键事件的顺序（**仅开场那一次**给出，用于确认开场时点）
 - [短期记忆] 最近5轮对话摘要
 - [早期关键节点] 已滑出短期记忆的更早剧情与关键事件（保持长程连贯，不要与之矛盾）

@@ -540,7 +540,10 @@ def check_player_identity():
       A14-4 私聊入口对主角直接拒绝，且不发起 LLM 调用
       A14-5 台词 prompt 与私聊 prompt 都注入 [玩家身份] 与本作主角名
             （未触发事件名的零泄漏口径由 A11-4 守着，不在此重复）
+      A14-6 DM 的开场 prompt 与动作轮 prompt 同样注入（原著开头是第三人称叙述，
+            不注入 DM 会把主角写成旁边看戏的旁人——真机开场实测）
     """
+    import agents.dm as dm
     import agents.graph as graph
     import agents.npc as npc
     import pipeline.character_extractor as ce
@@ -594,6 +597,19 @@ def check_player_identity():
         injected = all("[玩家身份]" in t and "孙悟空" in t
                        for t in (chat_prompt, dialogue_prompt))
         check("A14-5", injected, "台词 prompt / 私聊 prompt 均注入 [玩家身份] 与本作主角名")
+
+        # DM 侧同口径：原作开头是第三人称（"猴王倒身下拜"），不给身份 DM 会把主角写成旁人
+        original_retrieve, original_format_context = dm.retrieve, dm.format_context
+        try:
+            dm.retrieve = lambda novel_id, query: []  # 避开 ChromaDB 检索
+            dm.format_context = lambda retrieved: "（无）"
+            opening_prompt = dm.build_opening_prompt(probe, "（无）")
+            action_prompt = dm._build_prompt(sid, probe, "我环顾四周")
+        finally:
+            dm.retrieve, dm.format_context = original_retrieve, original_format_context
+        dm_injected = all("[玩家身份]" in t and "孙悟空" in t
+                          for t in (opening_prompt, action_prompt))
+        check("A14-6", dm_injected, "开场 prompt / 动作轮 prompt 均注入 [玩家身份] 与本作主角名")
     finally:
         npc.get_npc_profile = original_profile
         ce._cache.pop(probe, None)
