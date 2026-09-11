@@ -120,7 +120,26 @@ function setColorMode(mode) {
  * 2. 书架模块（launcher 首页）
  * -------------------------------------------------------------------------- */
 
-/** 拉取并渲染书架：只显示书名（右对齐菜单式），点击进入该书存档页 */
+/** 该书最近一次更新的时间（无存档则用上传时间），用于书架排序 */
+function novelUpdatedAt(nv) {
+  const stamps = (nv.sessions || []).map((s) => s.updated_at || '');
+  return stamps.length ? stamps.reduce((a, b) => (b > a ? b : a)) : (nv.uploaded_at || '');
+}
+
+/** 全局最近一次存档：供书架顶部「继续上次游戏」直达 */
+function latestSession(novels) {
+  let best = null;
+  for (const nv of novels) {
+    for (const s of nv.sessions || []) {
+      if (!best || (s.updated_at || '') > best.updatedAt) {
+        best = { nv, session: s, updatedAt: s.updated_at || '' };
+      }
+    }
+  }
+  return best;
+}
+
+/** 拉取并渲染书架：最近更新的书在最上，顶部一条「继续上次游戏」直达最近存档 */
 async function loadLibrary() {
   dom.novelMenuList.innerHTML = '';
   const empty = document.createElement('div');
@@ -130,12 +149,22 @@ async function loadLibrary() {
 
   try {
     const data = await api('/api/novel/list');
-    const novels = data.novels || [];
+    const novels = [...(data.novels || [])]
+      .sort((a, b) => novelUpdatedAt(b).localeCompare(novelUpdatedAt(a)));
     dom.novelMenuList.innerHTML = '';
     if (!novels.length) {
       empty.textContent = '还没有小说。点击上方「上传新小说」开始。';
       dom.novelMenuList.appendChild(empty);
       return;
+    }
+    const last = latestSession(novels);
+    if (last) {
+      const item = buildMenuItem('继续上次游戏', last.nv.title || last.nv.novel_id);
+      item.classList.add('menu-item-strong');
+      item.title = last.session.last_action || '继续上次进度';
+      item.addEventListener('click', () => resumeGame(
+        last.session.session_id, last.nv.novel_id, last.nv.title || last.nv.novel_id));
+      dom.novelMenuList.appendChild(item);
     }
     for (const nv of novels) {
       const count = (nv.sessions || []).length;
