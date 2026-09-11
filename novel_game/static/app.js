@@ -449,7 +449,7 @@ function handleSsePart(part) {
       // 后端保证该事件先于一切正文到达：立即弹窗并拦阻播放，关闭后从首页开始
       if (app.pager && evt.name) {
         app.pager.gated = true;
-        setSceneFx(evt);
+        applySceneFx(evt);
         openSceneModal(evt.name, evt.desc || '');
       }
       break;
@@ -487,37 +487,55 @@ const PAGER_TICK = 200;    // 协调心跳 ms（铺增量文字、检测定稿�
 const PAGE_OUT_MS = 280;   // 当前页下沉淡出时长，与 CSS pageSink 一致
 const PAGE_IN_MS = 500;    // 下一页弹出时长，与 CSS pagePop 一致
 
-/* 情景 → 氛围特效：键名与 style.css 里 body[data-scene-fx] 的取值一一对应，按顺序取首个命中 */
+/* 情景 → 氛围特效：键名与 style.css 里 body[data-scene-fx] 的取值一一对应，按顺序取首个命中。
+ * 关键词表见 README「情景氛围特效」一节，改动请同步那边 */
 const SCENE_FX = [
-  { fx: 'rain', re: /雨|滂沱|雷/ },
-  { fx: 'shake', re: /震|颤|抖|崩|塌|地动|厮杀|爆|轰/ },
+  { fx: 'rain', re: /骤雨|暴雨|大雨|中雨|细雨|小雨|雨声|雨幕|雨点|雨丝|雨势|雨水|雨夜|下雨|落雨|淋雨|淋透|湿透|滂沱|倾盆/ },
+  { fx: 'shake', re: /地震|地动|山崩|地裂|崩塌|坍塌|轰然|轰鸣|轰隆|巨响|炸裂|爆破|爆炸|雷霆|雷鸣|电闪|厮杀|混战|搏杀|剧烈震动|猛烈震动/ },
 ];
 
-/** 由场景名称/描述判定氛围特效；无命中返回空串（回到常规静景） */
-function detectSceneFx(scene) {
-  const text = `${(scene && scene.name) || ''}${(scene && scene.desc) || ''}`;
-  const hit = SCENE_FX.find((it) => it.re.test(text));
+/** 情景特效判定：命中返回 fx 名，无命中返回空串 */
+function detectSceneFx(text) {
+  const hit = SCENE_FX.find((it) => it.re.test(text || ''));
   return hit ? hit.fx : '';
 }
 
-/** 写入 body[data-scene-fx]；同值先清空并触发重排，让同一情景在新回合能重播入场动效 */
-function setSceneFx(scene) {
-  const next = detectSceneFx(scene);
-  if (!next) {
+/** 写入 body[data-scene-fx]，空值即回到静景；
+ *  同值先清空并触发重排，让同一情景在新回合能重播入场动效 */
+function setSceneFx(fx) {
+  if (!fx) {
     delete dom.body.dataset.sceneFx;
     return;
   }
-  if (dom.body.dataset.sceneFx === next) {
+  if (dom.body.dataset.sceneFx === fx) {
     delete dom.body.dataset.sceneFx;
     void dom.body.offsetWidth;
   }
-  dom.body.dataset.sceneFx = next;
+  dom.body.dataset.sceneFx = fx;
+}
+
+/** 场景侧判定源：场景名 + 氛围描述（后端保证 scene_change 先于一切正文到达） */
+function applySceneFx(scene) {
+  setSceneFx(detectSceneFx(`${(scene && scene.name) || ''}${(scene && scene.desc) || ''}`));
+}
+
+/* 正文侧判定源：本轮正文前 120 字；每轮至多判一次，避免边流边判导致反复闪 */
+const FX_STORY_CHARS = 120;
+
+/** 正文侧情景判定：正文攒够 120 字、或本轮正文结束（final）时判一次，命中才写入特效。
+ *  无命中不清除——场景侧已在回合开始复位过，避免读到一半特效忽然消失 */
+function judgeStoryFx(final) {
+  const p = app.pager;
+  if (!p || p.fxJudged) return;
+  if (!final && p.fxText.length < FX_STORY_CHARS) return;
+  p.fxJudged = true;
+  setSceneFx(detectSceneFx(p.fxText.slice(0, FX_STORY_CHARS)));
 }
 
 /** 开启新一轮：复位分页状态机；scene 有效时先弹窗（此时正文一个字都未显示） */
 function beginTurn({ scene } = {}) {
   app.pendingChoices = null;
-  setSceneFx(scene);            // 本轮情景特效；scene 为空即回到静景
+  applySceneFx(scene);          // 本轮场景侧特效；scene 为空即回到静景
   app.pager = {
     segs: [],          // 已到达内容段 [{kind:'npc'|'scene', speaker, text}]
     pages: [],         // 扁平化页 [{kind, speaker, text}]，每段独立分页
@@ -527,6 +545,8 @@ function beginTurn({ scene } = {}) {
     animating: false,  // 页面弹出/沉回动画锁
     dirty: false,      // segs 有增量，等待心跳重算分页
     finished: false,   // 末页定稿已出选项，播放器收工
+    fxText: '',        // 本轮正文累积（供正文侧情景判定取样）
+    fxJudged: false,   // 正文侧情景是否已判定（每轮至多一次）
     timer: null,
   };
   dom.stream.classList.add('paging');
@@ -550,6 +570,10 @@ function appendSegment(kind, speaker, text) {
   if (tail && tail.kind === kind && tail.speaker === spk) tail.text += chunk;
   else p.segs.push({ kind, speaker: spk, text: chunk });
   p.dirty = true;
+  if (kind === 'scene') {
+    p.fxText += chunk;
+    judgeStoryFx(false);       // 攒够 120 字才判，未够则等本轮正文结束再判
+  }
   hideTyping();
   hideThinkingCursor();
 }
@@ -732,6 +756,7 @@ function renderPageShell(animate = true) {
 function playTick() {
   const p = app.pager;
   if (!p || p.gated || p.animating || p.finished) return;
+  if (p.done) judgeStoryFx(true);   // 本轮正文结束：没攒够 120 字也补判一次
   if (p.dirty) rebuildPages();
   if (!p.pages.length) {
     if (p.done) finishTurn();    // 本轮无任何正文（异常/纯空回应）
