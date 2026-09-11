@@ -1,13 +1,14 @@
-"""小说上传接口 + 书架列表"""
+"""小说上传接口（异步导入 + 进度查询）+ 书架列表"""
 
 import logging
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from pipeline.novel_parser import ingest, delete_collection
-from pipeline.character_extractor import extract_characters, drop_cache
+from fastapi.responses import JSONResponse
+from api.import_jobs import create_job, snapshot, start
+from pipeline.novel_parser import delete_collection
+from pipeline.character_extractor import drop_cache
 from config import NOVELS_DIR
-from utils import read_text_auto
 from memory.global_state import drop_state
 from memory.session_store import (
     add_novel, delete_session_file, get_novel_meta, list_novels, remove_novel,
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/api/novel", tags=["novel"])
 
 @router.post("/upload")
 async def upload_novel(file: UploadFile = File(...)):
+    """上传小说文件 → 建导入任务 → 立即返回 job_id（入库/人物提取在后台线程跑）"""
     logger.info("上传请求: filename=%s, content_type=%s, size=%s",
                 file.filename, file.content_type, file.size)
 
@@ -48,22 +50,29 @@ async def upload_novel(file: UploadFile = File(...)):
     file_path.write_bytes(content)
     logger.info("已保存到 %s", file_path)
 
-    result = ingest(safe_name)
-
-    # 人物提取为非关键路径：LLM 失败时降级（关系图/NPC人设不可用），不阻断上传
-    try:
-        extract_characters(result["novel_id"], read_text_auto(file_path))
-    except Exception as e:
-        logger.exception("人物提取失败，小说已上传但关系图/NPC人设暂不可用: %s", e)
-
-    # 记录到书架
     original_title = file.filename.replace(".txt", "").replace(
         ".md", "") if file.filename else safe_name
-    add_novel(result["novel_id"], safe_name, original_title)
-    logger.info("已添加到书架: novel_id=%s, title=%s",
-                result["novel_id"], original_title)
 
-    return result
+    # 任务只活在内存里且同一时刻只允许一个，未抢到名额的回 409（文件刚落盘，删掉）
+    job_id = create_job(file.filename or safe_name, original_title)
+    if job_id is None:
+        file_path.unlink(missing_ok=True)
+        return JSONResponse(status_code=409,
+                            content={"error": "已有导入任务正在进行，请等它完成后再上传"})
+
+    start(job_id, file_path)
+    logger.info("已提交导入任务: job_id=%s, file=%s, title=%s",
+                job_id, safe_name, original_title)
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/import/{job_id}")
+async def get_import_job(job_id: str):
+    """查询导入任务进度；任务只在内存，服务重启后一律 404"""
+    job = snapshot(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"导入任务不存在: {job_id}")
+    return job
 
 
 @router.get("/list")

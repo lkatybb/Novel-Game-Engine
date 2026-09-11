@@ -11,8 +11,9 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+    full   A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + C1-C6 + A6 + A1-A5/A8 + A7 + B9-B12
+           + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + C1-C6 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -60,6 +61,12 @@
     B8     删除后重新上传同一本小说 -> 能入库 + 能开局（并顺手删掉，兼作端到端复验）
     B9-B12 TU-4 删存档：200 / 快照消失 / 书架不含该 sid 且同书其他存档仍在 / 重复删除 404
            / 删除后 resume 404
+    C1     上传立即返回 job_id（不再同步返回 novel_id）
+    C2     未知 job_id 查询导入进度 → 404（任务只活在内存里）
+    C3     .exe 仍在同步阶段被拒（HTTP 200 + {"error": "不支持…"}，老口径不变）
+    C4     轮询导入任务直到 status=done 且 chunk_count > 0
+    C5     导入进行中 /api/novel/list 仍 200 且 <1s（事件循环不再被 ingest 阻塞）
+    C6     已有 running 任务时再上传 → 409（同一时刻只允许一个导入任务）
 
 退出码：全部通过 0；任一失败 1（失败项在末尾汇总）
 """
@@ -80,9 +87,9 @@ ROOT = Path(__file__).resolve().parent
 
 # 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
 #   full   = 默认，行为与引入分层前完全一致：A9/A10/A11/A12/A13/A14/A15/A16 + B14 + PRE-1~3
-#            + A6 + A1-A5/A8 + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
+#            + C 组（上传异步化）+ A6 + A1-A5/A8 + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
 #   delete = 删除能力快层（迭代替换用）：A9/A10/A11/A12/A13/A14/A15/A16 + B14 + PRE-1~3
-#            + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、
+#            + C 组 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、
 #            /resume 的 A7 与最贵的 B8
 # 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
 SCOPE = os.environ.get("CONTRACT_SCOPE", "full")
@@ -194,17 +201,42 @@ def shelf_ids() -> list[str]:
     return [nv["novel_id"] for nv in get_json("/api/novel/list").get("novels", [])]
 
 
-def upload(path: Path, timeout: int = 600) -> str:
-    """以 multipart/form-data 上传小说样本，返回响应原始文本"""
+def post_upload(filename: str, data: bytes, timeout: int = 600) -> tuple[int, str]:
+    """以 multipart/form-data 上传文件，返回 (HTTP 状态码, 响应原文)；非 2xx 也照读不抛"""
     boundary = uuid.uuid4().hex
     header = (f"--{boundary}\r\n"
-              f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
+              f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
               "Content-Type: text/plain\r\n\r\n").encode("utf-8")
     footer = f"\r\n--{boundary}--\r\n".encode("utf-8")
-    req = Request(BASE + "/api/novel/upload", data=header + path.read_bytes() + footer,
+    req = Request(BASE + "/api/novel/upload", data=header + data + footer,
                   headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
-    with urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8")
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except HTTPError as e:
+        return e.code, e.read().decode("utf-8")
+
+
+def poll_import(job_id: str, timeout: int = 600) -> dict:
+    """轮询导入任务直到不再是 running，返回终态快照"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        job = get_json(f"/api/novel/import/{job_id}")
+        if job.get("status") != "running":
+            return job
+        time.sleep(1.5)
+    raise TimeoutError(f"导入任务超时未结束: {job_id}")
+
+
+def upload(path: Path, timeout: int = 600) -> str:
+    """上传小说样本并等导入结束，返回终态任务快照原文（含 novel_id / chunk_count）"""
+    status, body = post_upload(path.name, path.read_bytes(), timeout)
+    if status != 200:
+        raise RuntimeError(f"上传失败: HTTP {status}, body = {body}")
+    job = poll_import(json.loads(body)["job_id"], timeout)
+    if job.get("status") != "done":
+        raise RuntimeError(f"导入任务未成功: {job}")
+    return json.dumps(job, ensure_ascii=False)
 
 
 def convergence_reason(state: dict, order_map: dict):
@@ -1031,6 +1063,53 @@ def check_drop_containers(novel_id: str, session_id: str):
           "内存三容器（_cache / _states / _memory）均已清除")
 
 
+def check_import_job():
+    """C1-C6：上传异步化 —— 接口立即返回 job_id，导入在后台跑，期间后端照常服务。
+
+    必须放在主上传之后调用：embedding 模型是懒加载的，第一次 ingest 会顺带加载模型，
+    此时测 /api/novel/list 的响应延迟容易受模型加载干扰，结论不稳。
+    """
+    # C3：文件类型校验仍在同步阶段，老口径 {"error"} 不变
+    status, body = post_upload("bad.exe", b"hello")
+    check("C3", status == 200 and "不支持" in json.loads(body).get("error", ""),
+          f".exe 同步拒绝 -> HTTP {status}, body = {body.strip()}")
+
+    # C2：未知 job_id → 404（任务只活在内存里，服务重启即失效）
+    status, _ = request_json("GET", "/api/novel/import/job_not_exist")
+    check("C2", status == 404, f"未知 job_id 查询 -> HTTP {status}（应为 404）")
+
+    # C1：上传立即返回 job_id，不再同步返回 novel_id
+    status, body = post_upload(SAMPLE.name, SAMPLE.read_bytes())
+    payload = json.loads(body)
+    job_id = payload.get("job_id", "")
+    check("C1", status == 200 and job_id.startswith("job_") and "novel_id" not in payload,
+          f"上传立即返回 -> HTTP {status}, body = {payload}")
+
+    # C5：导入进行中，书架接口仍要 200 且 <1s（事件循环没被 ingest 占死）
+    began = time.time()
+    status = request_json("GET", "/api/novel/list")[0]
+    elapsed = time.time() - began
+    check("C5", status == 200 and elapsed < 1.0,
+          f"导入进行中 /api/novel/list -> HTTP {status}, 耗时 {elapsed:.3f}s（<1s 即事件循环未被阻塞）")
+
+    # C6：已有 running 任务时再上传 → 409（D6：同一时刻只允许一个导入任务）
+    status, body = post_upload(SAMPLE.name, SAMPLE.read_bytes())
+    check("C6", status == 409 and "error" in json.loads(body),
+          f"并发上传 -> HTTP {status}, body = {body.strip()}（应为 409）")
+
+    # C4：轮询到 done，且 chunk_count > 0
+    job = poll_import(job_id)
+    check("C4", job.get("status") == "done" and job.get("chunk_count", 0) > 0,
+          f"轮询到结束 -> status={job.get('status')}, chunk_count={job.get('chunk_count')},"
+          f" novel_id={job.get('novel_id')}")
+
+    # 本组自建的书自己删掉，不给书架留残留
+    novel_id = job.get("novel_id")
+    if novel_id:
+        status, _ = request_json("DELETE", f"/api/novel/{novel_id}")
+        print(f"[INFO] C 组清理自建小说 novel_id={novel_id} -> HTTP {status}")
+
+
 def check_novel_delete():
     """B1-B8 + B6a/B6b：TU-5 删除小说的零残留、幂等与"不存在即报错"语义。
 
@@ -1201,6 +1280,9 @@ def main():
     order_map = {e["event_name"]: e.get("order", 999) for e in key_events if e.get("event_name")}
     if not check("PRE-3", len(order_map) > 0, f"关键事件数 = {len(order_map)}（A4 判定依据）"):
         return
+
+    # ================= C 组：上传异步化 + 导入进度查询 =================
+    check_import_job()
 
     # ---------- /start（两层都需要：delete 层要用 session_id 做 B10 的"同书其他存档仍在"基准）----------
     start_data = json.loads(post_json("/api/game/start", {"novel_id": novel_id}))

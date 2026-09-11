@@ -3,6 +3,7 @@
 import re
 import uuid
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 
@@ -62,12 +63,13 @@ def _split_text(text: str) -> list[str]:
     return chunks
 
 
-def ingest(novel_file: str) -> dict:
+def ingest(novel_file: str, on_progress: Callable[[int, int], None] | None = None) -> dict:
     """
     读取小说文件，切片，Embedding入ChromaDB
 
     Args:
         novel_file: 文件名（在data/novels/目录下）或绝对路径
+        on_progress: 每批入库后回调 (已完成批数, 总批数)；不传则不回调
 
     Returns:
         {novel_id, chunk_count, title}
@@ -103,13 +105,16 @@ def ingest(novel_file: str) -> dict:
 
     # 批量入库
     batch_size = 50
-    for i in range(0, len(chunks), batch_size):
+    batch_total = (len(chunks) + batch_size - 1) // batch_size
+    for batch_no, i in enumerate(range(0, len(chunks), batch_size), start=1):
         batch = chunks[i:i + batch_size]
         collection.add(
             ids=[f"{novel_id}_chunk_{i + j}" for j in range(len(batch))],
             documents=batch,
             metadatas=[{"novel_id": novel_id, "chunk_index": i + j, "title": title} for j in range(len(batch))],
         )
+        if on_progress:
+            on_progress(batch_no, batch_total)
 
     logger.info("入库完成: novel_id=%s, %d段", novel_id, len(chunks))
 

@@ -47,13 +47,23 @@ try:
 except Exception as e:
     check("导入链", False, str(e))
 
-# 2. 上传 + 入库
+# 2. 上传 + 入库（上传接口已异步化：POST 只拿 job_id，进度得轮询）
 print("\n=== 2. 上传 + 入库 ===")
 txt = pathlib.Path("data/novels/西游记-样本.txt").read_bytes()
 r = requests.post(BASE + "/api/novel/upload", files={"file": ("西游记-样本.txt", txt)})
-check("上传 200", r.status_code == 200)
-novel_id = r.json().get("novel_id")
-check("novel_id 生成", bool(novel_id))
+job_id = r.json().get("job_id")
+check("上传 200", r.status_code == 200 and bool(job_id), f"body={r.text.strip()}")
+
+job = {}
+deadline = time.time() + 600
+while time.time() < deadline:
+    job = requests.get(BASE + f"/api/novel/import/{job_id}").json()
+    if job.get("status") != "running":
+        break
+    time.sleep(1.5)
+novel_id = job.get("novel_id")
+check("novel_id 生成", job.get("status") == "done" and bool(novel_id),
+      f"status={job.get('status')}, error={job.get('error')}")
 
 # 3. 关键事件落盘
 print("\n=== 3. 关键事件落盘 ===")

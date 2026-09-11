@@ -66,6 +66,10 @@ const app = {
   affinitySnapshot: {},    // 上一轮好感度，用于 diff 出"本回合被触动的角色"
 };
 
+/** 导入任务：id 存本地，刷新页面后还能接着看进度 */
+const IMPORT_JOB_KEY = 'ng-import-job';
+const IMPORT_POLL_MS = 1500;
+
 /* --------------------------------------------------------------------------
  * 1. 工具函数
  * -------------------------------------------------------------------------- */
@@ -84,7 +88,7 @@ function hideToast() {
   dom.toast.classList.remove('show');
 }
 
-/** 统一 JSON 请求封装：非 2xx 抛错并携带后端 detail */
+/** 统一 JSON 请求封装：非 2xx 抛错并携带后端 detail（或 error）与状态码 */
 async function api(path, { method = 'GET', body, formData } = {}) {
   const opts = { method };
   if (formData) opts.body = formData;
@@ -102,9 +106,12 @@ async function api(path, { method = 'GET', body, formData } = {}) {
     let detail = `请求失败 (${resp.status})`;
     try {
       const err = await resp.json();
-      if (err.detail) detail = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+      const msg = err.detail ?? err.error;      // detail 是 FastAPI 惯例，error 是本项目老口径
+      if (msg) detail = typeof msg === 'string' ? msg : JSON.stringify(msg);
     } catch { /* 响应非 JSON，保持默认文案 */ }
-    throw new Error(detail);
+    const httpErr = new Error(detail);
+    httpErr.status = resp.status;               // 调用方可按状态码分支（如 404 任务失效）
+    throw httpErr;
   }
   return resp.json();
 }
@@ -292,26 +299,61 @@ async function deleteNovel(nv) {
   }
 }
 
-/** 上传小说 → 自动开始新游戏 */
+/** 上传小说 → 后端建导入任务 → 轮询进度 → 自动开始新游戏 */
 async function uploadNovel(file) {
   if (!file) return;
   if (file.size > 10 * 1024 * 1024) { toast('文件超过 10MB 上限'); return; }
   dom.importBtn.disabled = true;
-  toast('正在上传并解析小说，约 10-20 秒…');
+  toast('正在上传文件…', true);
   try {
     const fd = new FormData();
     fd.append('file', file);
     const data = await api('/api/novel/upload', { method: 'POST', formData: fd });
     // 后端校验失败时返回 200 + {error}，需显式检查
     if (data.error) throw new Error(data.error);
-    toast('上传成功，正在进入故事…');
-    await startGame(data.novel_id, file.name.replace(/\.(txt|md)$/i, ''));
+    watchImportJob(data.job_id);
   } catch (e) {
+    clearImportJob();
     toast(`上传失败：${e.message}`);
-  } finally {
-    dom.importBtn.disabled = false;
-    dom.fileInput.value = '';
   }
+}
+
+/** 轮询导入任务；进度常驻在 toast 上（导入要几分钟，不能 2.6 秒就消失） */
+async function watchImportJob(jobId) {
+  dom.importBtn.disabled = true;
+  try { localStorage.setItem(IMPORT_JOB_KEY, jobId); } catch { /* 忽略 */ }
+  while (true) {
+    let job;
+    try {
+      job = await api(`/api/novel/import/${encodeURIComponent(jobId)}`);
+    } catch (e) {
+      // 404 = 服务重启过，内存里的任务已失效，不能静默转圈
+      clearImportJob();
+      toast(e.status === 404 ? '导入任务已失效，请重新上传' : `导入状态查询失败：${e.message}`);
+      return;
+    }
+    if (job.status === 'done') {
+      clearImportJob();
+      toast('导入完成，正在进入故事…', true);
+      await loadLibrary();
+      await startGame(job.novel_id, job.title);
+      return;
+    }
+    if (job.status === 'error') {
+      clearImportJob();
+      toast(`上传失败：${job.error}`);
+      return;
+    }
+    toast(`${job.stage} ${job.progress}%`, true);
+    await new Promise((resolve) => setTimeout(resolve, IMPORT_POLL_MS));
+  }
+}
+
+/** 清掉本地任务标记并解禁上传按钮（成功、失败、失效都走这里） */
+function clearImportJob() {
+  try { localStorage.removeItem(IMPORT_JOB_KEY); } catch { /* 忽略 */ }
+  dom.importBtn.disabled = false;
+  dom.fileInput.value = '';
 }
 
 /* --------------------------------------------------------------------------
@@ -1399,3 +1441,11 @@ dom.menuPanel.addEventListener('click', (e) => {
 
 // 初始化
 loadLibrary();
+resumeImportJob();
+
+/** 页面加载时若上次有导入没结束，接着显示进度（刷新/关标签页都不丢） */
+function resumeImportJob() {
+  let jobId = null;
+  try { jobId = localStorage.getItem(IMPORT_JOB_KEY); } catch { /* 忽略 */ }
+  if (jobId) watchImportJob(jobId);
+}
