@@ -47,6 +47,7 @@ const dom = {
   // 翻页阅读 / 场景弹窗
   tapHint: $('tapHint'),
   sceneOverlay: $('sceneOverlay'), sceneName: $('sceneName'), sceneDesc: $('sceneDesc'),
+  endingOverlay: $('endingOverlay'), endingText: $('endingText'), endingHome: $('endingHome'),
 };
 
 /** 应用全局状态（单一数据源） */
@@ -60,6 +61,8 @@ const app = {
   pendingChoices: null,    // SSE 提前到达的选项，末页播完才渲染
   pager: null,             // 分页播放器状态（beginTurn 创建）
   sceneModalOpen: false,   // 场景弹窗打开时屏蔽翻页点击
+  ended: false,            // 已走到原著结局：本局交互锁死，只能返回书架
+  endingShown: false,      // 结局页是否已弹出（终局后每轮 state 都带判定，避免重复弹）
   chat: { npc: '', busy: false, logs: {} },  // 私聊记录只在前端：服务端只读，不落盘
   chatRoster: null,        // 本作可私聊角色名（首次打开时拉取）
   focusNpc: null,          // 顶栏好感度当前展示的角色
@@ -378,6 +381,12 @@ function enterGame(title) {
 function goHome() {
   closeMenu();
   resetChat();
+  // 结局页复位：结局是本局终点，"返回书架"是唯一出口，离开即解除锁死
+  app.ended = false;
+  app.endingShown = false;
+  dom.endingOverlay.classList.remove('show');
+  dom.endingOverlay.hidden = true;
+  dom.freeInput.disabled = false;
   dom.app.hidden = true;
   dom.launcher.hidden = false;
   app.sessionId = null;
@@ -461,7 +470,7 @@ async function resumeGame(sessionId, novelId, title) {
 /** 发送玩家动作（SSE 流式接收） */
 async function sendAction(text) {
   const action = (text || '').trim();
-  if (!action || app.busy || !app.sessionId) return;
+  if (!action || app.busy || !app.sessionId || app.ended) return;
 
   app.busy = true;
   setInteractionEnabled(false);
@@ -930,6 +939,8 @@ dom.reader.addEventListener('click', (e) => {
 
 /** 场景弹窗：点击任意处关闭 */
 dom.sceneOverlay.addEventListener('click', closeSceneModal);
+// 结局页只能显式点「返回书架」退出（不提供"点击任意处关闭"：这是本局终点）
+dom.endingHome.addEventListener('click', goHome);
 
 /** 键盘可访问性：空格/→/回车/PageDown 翻页，Esc 关弹窗；输入框聚焦时不劫持 */
 document.addEventListener('keydown', (e) => {
@@ -1062,6 +1073,23 @@ function renderChoices(options) {
   });
 }
 
+/** 终局：弹出原著结局并锁死本局交互（走到结局就是终点，只留「返回书架」）
+ *
+ * 结局是全书最大的剧透，后端只在"全部关键事件已触发"时才下发，这里只负责展示。
+ * 一局只弹一次：终局后每轮 state 仍带同一个 ending，靠 endingShown 挡住重复。
+ */
+function applyEnding(ending) {
+  if (!ending || app.endingShown) return;
+  app.ended = true;
+  app.endingShown = true;
+  dom.endingText.textContent = ending;     // textContent 防注入
+  dom.freeInput.disabled = true;           // 不再接受自由输入
+  dom.choices.innerHTML = '';              // 不再给选项
+  dom.tapHint.hidden = true;
+  dom.endingOverlay.hidden = false;
+  requestAnimationFrame(() => dom.endingOverlay.classList.add('show'));
+}
+
 /** 应用后端状态：顶部位置 + 好感度/理智度 HUD + 进度条 */
 function applyState(state) {
   if (!state) return;
@@ -1073,6 +1101,7 @@ function applyState(state) {
   }
   updateStats(state);
   updateProgress();
+  applyEnding(state.ending);
 }
 
 /** 好感度（焦点角色对玩家）/ 理智度：DM 按人物特质裁决的 0~100 数值（后端已钳制）

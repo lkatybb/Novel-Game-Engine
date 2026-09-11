@@ -40,8 +40,10 @@ def _enrich_state(state, novel_id):
 
     stats_meta：本书主角属性维度的名称与说明（不含数值——数值在 state.stats 里），
     供前端属性面板显示每项属性的含义。
+
+    ending：原著结局摘要，只在"全部关键事件已触发"的终局下发，其余时刻恒为 None。
     """
-    from pipeline.character_extractor import get_key_events, get_player_stats
+    from pipeline.character_extractor import get_ending, get_key_events, get_player_stats
     all_events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
     triggered = list(state.triggered_events)
 
@@ -58,6 +60,11 @@ def _enrich_state(state, novel_id):
         {"event_name": nxt["event_name"], "order": nxt.get("order", 999)} if nxt else None
     )
     enriched["total"] = len(all_events)
+    # 结局只在终局下发：全部关键事件都已触发才算走到终点。一本书没抽到事件时
+    # total = 0，不算终局（否则老书一开局就会弹结局）；非终局一律 None——结局是
+    # 全书最大的剧透，与"未触发事件不下发"是同一条纪律。
+    finished = bool(all_events) and all(e["event_name"] in triggered for e in all_events)
+    enriched["ending"] = (get_ending(novel_id) or None) if finished else None
     enriched["stats_meta"] = [{"name": s["name"], "desc": s.get("desc", "")}
                               for s in get_player_stats(novel_id)]
     return enriched

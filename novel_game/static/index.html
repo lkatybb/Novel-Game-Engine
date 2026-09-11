@@ -164,6 +164,16 @@
     <p class="scene-tap">轻触任意处继续</p>
   </div>
 
-  <script src="/app.js?v=18"></script>
+  <!-- ========== 结局页（走到终局才出现：只留「返回书架」） ========== -->
+  <div class="scene-overlay ending-overlay" id="endingOverlay" hidden role="dialog" aria-modal="true"
+       aria-label="结局">
+    <div class="scene-card">
+      <h2 class="scene-name">结局</h2>
+      <p class="scene-desc" id="endingText"></p>
+    </div>
+    <button class="text-btn primary" id="endingHome">返回书架</button>
+  </div>
+
+  <script src="/app.js?v=19"></script>
 </body>
 </html>

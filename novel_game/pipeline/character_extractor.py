@@ -128,6 +128,42 @@ def _extract_player_stats(text_sample: str, protagonist: str) -> list[dict]:
     return cleaned
 
 
+def _ending_sample_of(text: str) -> str:
+    """取全书末尾 EXTRACT_SAMPLE_CHARS 字做样本。
+
+    结局在书尾，段首采样（_sample_of）永远看不到；这里独立取尾，不改动现有的
+    分段采样口径。
+    """
+    return text[-EXTRACT_SAMPLE_CHARS:]
+
+
+def _extract_ending(text_sample: str) -> str:
+    """第五步：提取原著结局摘要（一段客观叙述）。
+
+    只看全书末尾样本。非关键路径——失败返回空串，结局功能整体关闭（与
+    player_stats 空列表同口径），绝不用生成式文案兜底。
+    """
+    ending_prompt = """你是小说分析专家。根据以下小说**结尾部分**的文本，客观概述这本书的结局。
+
+要求：
+- 只描述原著最后发生了什么：主要人物的最终遭遇、故事以何种方式落幕
+- 150-250 字，纯叙述，不评价、不抒情、不发挥
+- 只写文本中真实交代的内容，文本没写的后续一律不写
+
+输出JSON格式：
+{
+  "ending": "结局概述"
+}"""
+
+    logger.info("开始提取原著结局摘要...")
+    try:
+        ending = json.loads(_llm_call(ending_prompt, text_sample)).get("ending", "")
+    except Exception as e:
+        logger.warning("结局摘要提取失败，本作不启用结局: %s", e)
+        return ""
+    return str(ending).strip()
+
+
 _EVENT_QUOTA_MAX = 15   # 单段事件条数上限（= 旧口径的"5-15 个"，单段书与旧行为一致）
 _EVENT_QUOTA_MIN = 3    # 单段事件条数下限（段数再多也要给每段留出记录骨架的机会）
 _PROFILE_LIMIT = 10     # 每段最多生成人设的角色数（= 旧口径的"最多取前10个"）
@@ -367,7 +403,8 @@ def extract_characters(novel_id: str, novel_text: str,
             "graph": {"nodes": [...], "links": [...]},
             "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...},
             "key_events": [{"event_name", "trigger_condition", "order", "key_characters"}, ...],
-            "player_stats": [{"name", "desc", "init"}, ...]
+            "player_stats": [{"name", "desc", "init"}, ...],
+            "ending": "原著结局摘要（空串 = 该作不启用结局）"
         }
     """
     # 检查缓存（内存 → 磁盘）
@@ -416,21 +453,26 @@ def extract_characters(novel_id: str, novel_text: str,
     logger.info("开始提取主角属性维度...")
     player_stats = _extract_player_stats(_sample_of(segments[0]), protagonist)
 
+    # ---- 第五步：提取原著结局摘要（只看全书末尾；非关键路径，失败即整体关闭） ----
+    ending = _extract_ending(_ending_sample_of(novel_text))
+
     # 缓存（内存 + 磁盘）
     result = {
         "graph": graph_data,
         "npc_profiles": npc_profiles,
         "key_events": key_events,
         "player_stats": player_stats,
+        "ending": ending,
     }
     _cache[novel_id] = result
     _save_to_disk(novel_id, result)
 
-    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性",
+    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性, 结局摘要 %d 字",
                 len(graph_data["nodes"]),
                 len(graph_data["links"]),
                 len(key_events),
-                len(player_stats))
+                len(player_stats),
+                len(ending))
 
     return result
 
@@ -496,6 +538,17 @@ def get_player_stats(novel_id: str) -> list[dict]:
         return []
     return [s for s in _cache[novel_id].get("player_stats", [])
             if isinstance(s, dict) and s.get("name")]
+
+
+def get_ending(novel_id: str) -> str:
+    """原著结局摘要，老书或提取失败时为空串。
+
+    空串是合法结果：结局功能整体关闭（走到终局也不下发），不临时生成一段结局。
+    结局是全书最大的剧透，只能由终局判定按需取用，不得进 DM 常规上下文。
+    """
+    if not _ensure_loaded(novel_id):
+        return ""
+    return str(_cache[novel_id].get("ending", "") or "")
 
 
 def get_key_events(novel_id: str) -> list[dict]:

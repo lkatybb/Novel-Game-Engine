@@ -1236,6 +1236,52 @@ Phase 4 完成，开始 Phase 5。
 
 ---
 
+## 原著结局（只在终局下发）
+
+游戏走到终局时弹出**原著结局摘要**，这是本局真正的终点：看完只能「返回书架」。
+
+### 数据从哪来
+
+导入时 `character_extractor.py` 第五步额外做 1 次 LLM 调用，取**全书末尾** `EXTRACT_SAMPLE_CHARS`（8000）字做样本（段首采样 `_sample_of` 永远看不到书尾），提取一段 150~250 字的客观概述，与人物缓存一起落盘：
+
+```json
+{
+  "graph": { "...": "..." },
+  "npc_profiles": { "...": "..." },
+  "key_events": [],
+  "player_stats": [],
+  "ending": "原著结局概述（空串 = 该作不启用结局）"
+}
+```
+
+`ending` 是**可选字段**：老书缓存里没有它 → `get_ending()` 返回空串 → 结局功能整体关闭，游戏照常跑。**不需要迁移任何旧缓存**，也不动数据库结构。
+
+提取失败同样返回空串（非关键路径，与 `player_stats` 空列表同口径），**绝不用生成式文案兜底**。
+
+### 什么时候下发（判定口径）
+
+`api/route_game.py::_enrich_state()` 每轮都算 `ending`：
+
+| 情况 | `total` | `next_event` | `ending` |
+| --- | --- | --- | --- |
+| 走到终局（**全部**关键事件已触发） | > 0 | `null` | 结局摘要 |
+| 游戏进行中 | > 0 | 下一事件 | `null` |
+| 该书没抽到关键事件（老书 / 提取失败） | 0 | `null` | `null` |
+
+判据：`bool(all_events) and all(e["event_name"] in triggered for e in all_events)`。
+
+> ⚠️ `total > 0` 这个前提不能漏。没抽到事件的书 `next_event` 也是 `null`，只看 `next_event is null` 判通关，老书一开局就会弹结局。
+
+### 防剧透纪律（红线）
+
+结局是全书最大的剧透，**只在终局那一刻**下发。**绝不能**塞进 DM 的 System Prompt 或常规上下文，否则每轮对话都在剧透。契约测试 `test_contract.py::check_offline_ending`（A17）把这个口径锁成 4 条离线断言。
+
+### 前端行为
+
+`app.js::applyEnding(state.ending)` 挂在 `applyState()` 末尾：非空且本局没弹过 → 弹出 `#endingOverlay` 并锁死交互（清空选项、禁用自由输入、`app.ended = true` 挡住 `sendAction`）。结局页**不提供"点击任意处关闭"**，唯一出口是「返回书架」按钮。
+
+`goHome()` 负责复位结局态（`ended` / `endingShown` / 遮罩 / 输入框）。因此重进一个已通关的存档会再次看到结局——这是预期行为。
+
 ## 常见问题排查
 
 | 问题                                            | 原因                                                             | 解决                                  |

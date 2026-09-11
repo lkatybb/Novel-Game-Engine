@@ -11,9 +11,9 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + C1-C6 + A6 + A1-A5/A8 + A7 + B9-B12
+    full   A9/A10/A11/A12/A13/A14/A15/A16/A17 + PRE-1~3 + C1-C6 + A6 + A1-A5/A8 + A7 + B9-B12
            + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11/A12/A13/A14/A15/A16 + PRE-1~3 + C1-C6 + B9-B12 + B0-B7/B13/B6a/B6b
+    delete A9/A10/A11/A12/A13/A14/A15/A16/A17 + PRE-1~3 + C1-C6 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -41,7 +41,9 @@
            节点去重取最大 weight、边去重先出现者胜、主角唯一；人设取最早段；
            事件 order 跨段按段序稠密 1..N；单段书与旧口径一致（样本 8000 字、
            事件上限 15、主角属性只调 1 次）；节点数超上限按 weight 截断且不留悬空边；
-           合并结果 4 个顶层 key 与元素字段逐字未变
+           合并结果 5 个顶层 key（含 ending）与元素字段逐字未变
+    A17   离线四向断言：原著结局只在终局下发（走到一半 / 无事件书 / 老书无摘要一律 None，
+           全部触发才下发）——结局是全书最大的剧透，防"每轮对话都在剧透"
     PRE-1  测试样本文件存在
     PRE-2  契约测试目标服务可达（地址取 CONTRACT_BASE，默认 8888）
     PRE-3  上传后能取到非空的关键事件清单（A4/A8 的判定依据）
@@ -351,6 +353,48 @@ def check_offline_next_event():
         check("A9-2", got is not None, f"order 缺失 → next_event = {got!r}")
     finally:
         ce.get_key_events = original
+
+
+def check_offline_ending():
+    """A17：离线确定性断言——原著结局只在终局下发（防剧透红线）。
+
+    结局是全书最大的剧透：未走到终局时 state.ending 必须恒为 None，否则每轮
+    对话都在给玩家剧透。同时 total = 0 的"没抽到事件的书"不算终局——否则老书
+    一开局 next_event 就是 null，会被误判成"已通关"直接弹结局。
+    """
+    from api.route_game import _enrich_state
+    from models import GameState
+    import pipeline.character_extractor as ce
+
+    original_events, original_ending = ce.get_key_events, ce.get_ending
+    try:
+        ce.get_ending = lambda novel_id: "原著结局：师徒四人取得真经，各归其位。"
+        ce.get_key_events = lambda novel_id: [
+            {"event_name": "事件A", "order": 1},
+            {"event_name": "事件B", "order": 2},
+        ]
+
+        # 场景 1：只触发了一部分 → 结局必须藏着
+        got = _enrich_state(GameState(novel_id="x", triggered_events=["事件A"]), "x")["ending"]
+        check("A17-1", got is None, f"未走到终局 → ending = {got!r}")
+
+        # 场景 2：全部触发 → 下发原著结局
+        got = _enrich_state(GameState(novel_id="x", triggered_events=["事件A", "事件B"]), "x")["ending"]
+        check("A17-2", got == "原著结局：师徒四人取得真经，各归其位。",
+              f"走到终局 → ending = {got!r}")
+
+        # 场景 3：没抽到事件的书（total = 0）→ 不算终局（否则老书一开局就弹结局）
+        ce.get_key_events = lambda novel_id: []
+        got = _enrich_state(GameState(novel_id="x", triggered_events=[]), "x")["ending"]
+        check("A17-3", got is None, f"无关键事件（total=0）→ ending = {got!r}")
+
+        # 场景 4：终局但该书没有结局摘要（老书）→ 仍为 None，避免前端弹出一片空白
+        ce.get_key_events = lambda novel_id: [{"event_name": "事件A", "order": 1}]
+        ce.get_ending = lambda novel_id: ""
+        got = _enrich_state(GameState(novel_id="x", triggered_events=["事件A"]), "x")["ending"]
+        check("A17-4", got is None, f"终局但无结局摘要 → ending = {got!r}")
+    finally:
+        ce.get_key_events, ce.get_ending = original_events, original_ending
 
 
 def check_offline_stats():
@@ -708,13 +752,14 @@ def check_character_segments():
 
     假 _llm_call 按 prompt 分派，并把"每段样本"回灌进图/人设/事件，用样本首二字标识
     这段落在全书的哪个位置；不联网、不掷骰子，纯结构化断言。
-      A16-1 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）
+      A16-1 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）；结局样本取自全书末尾
       A16-2 节点去重（weight 取最大）、边去重（先出现者胜）、主角唯一
       A16-3 同一角色多段人设 → 最早段胜出
       A16-4 事件 order 跨段按段序稠密 1..N
-      A16-5 单段书与旧口径一致：样本 = 前 8000 字、事件上限 15、主角属性只调 1 次
+      A16-5 单段书与旧口径一致：样本 = 前 8000 字、事件上限 15、主角属性只调 1 次；
+            结局摘要全书只调 1 次（不随段数增长）
       A16-6 节点数超上限时按 weight 截断，且不留悬空边
-      A16-7 合并结果 4 个顶层 key 与元素字段与旧结构逐字一致
+      A16-7 合并结果 5 个顶层 key（含 ending）与元素字段与旧结构逐字一致
     """
     import pipeline.character_extractor as ce
 
@@ -729,6 +774,8 @@ def check_character_segments():
             step = "profiles"
         elif "必须发生" in system_prompt:
             step = "events"
+        elif "客观概述这本书的结局" in system_prompt:
+            step = "ending"
         else:
             step = "stats"
         calls.append({"step": step, "sample": sample, "prompt": system_prompt})
@@ -775,6 +822,8 @@ def check_character_segments():
                 {"event_name": "三打白骨精", "trigger_condition": "白骨精三次变化",
                  "order": 1, "key_characters": ["孙悟空", "白骨精"]},
             ]})
+        if step == "ending":
+            return json.dumps({"ending": "假结局：师徒四人取得真经，各归其位。"})
         return json.dumps({"stats": [{"name": "神通", "desc": "法术本领", "init": 60}]})
 
     # 恰好 2 段：段 1 的样本是"开头…"，段 2 的样本是"尾部…"（长度跟随分段粒度，不写死）
@@ -792,14 +841,18 @@ def check_character_segments():
 
         result = ce.extract_characters(probe, long_text)
 
-        # ---- A16-1：每段都有自己的样本，第 2 次抽样来自第 2 段开头 ----
+        # ---- A16-1：每段都有自己的样本，第 2 次抽样来自第 2 段开头；结局样本取书尾 ----
         samples = [c["sample"] for c in calls if c["step"] == "graph"]
+        ending_samples = [c["sample"] for c in calls if c["step"] == "ending"]
         expect_second = long_text[ce.EXTRACT_SEGMENT_CHARS:ce.EXTRACT_SEGMENT_CHARS
                                   + ce.EXTRACT_SAMPLE_CHARS]
         check("A16-1",
-              len(samples) == 2 and samples[0] == head and samples[1] == expect_second,
+              len(samples) == 2 and samples[0] == head and samples[1] == expect_second
+              and len(ending_samples) == 1 and ending_samples[0] == long_text[-sample:],
               f"{len(samples)} 段各有样本，第 2 段样本取自第 {ce.EXTRACT_SEGMENT_CHARS} 字之后"
-              f"（{samples[1][:2] if len(samples) > 1 else '缺'}…）")
+              f"（{samples[1][:2] if len(samples) > 1 else '缺'}…）；"
+              f"结局样本 {len(ending_samples)} 次、取自全书末尾"
+              f"（{ending_samples[0][:2] if ending_samples else '缺'}…）")
 
         # ---- A16-2：去重口径 + 主角唯一 ----
         nodes = {n["id"]: n for n in result["graph"]["nodes"]}
@@ -836,16 +889,18 @@ def check_character_segments():
         calls.clear()
         ce.extract_characters(single_probe, single_text)
         single = {step: [c for c in calls if c["step"] == step]
-                  for step in ("graph", "events", "stats")}
+                  for step in ("graph", "events", "stats", "ending")}
         sample_ok = (len(single["graph"]) == 1
                      and single["graph"][0]["sample"] == single_text[:ce.EXTRACT_SAMPLE_CHARS])
         quota_ok = (len(single["events"]) == 1
                     and "提取 5-15 个关键事件" in single["events"][0]["prompt"])
         check("A16-5",
-              sample_ok and quota_ok and len(single["stats"]) == 1,
+              sample_ok and quota_ok and len(single["stats"]) == 1
+              and len(single["ending"]) == 1,
               f"单段书：抽样 {len(single['graph'])} 次"
               f"（样本 {len(single['graph'][0]['sample']) if single['graph'] else 0} 字）、"
-              f"事件上限沿用旧口径 = {quota_ok}、主角属性调用 {len(single['stats'])} 次")
+              f"事件上限沿用旧口径 = {quota_ok}、主角属性调用 {len(single['stats'])} 次、"
+              f"结局摘要调用 {len(single['ending'])} 次（全书一次，不随段数增长）")
 
         # ---- A16-6：节点超上限按 weight 截断，且不留悬空边 ----
         heavy = {
@@ -872,7 +927,7 @@ def check_character_segments():
         cache_file = ce._cache_path(probe)
         cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
         check("A16-7",
-              set(result) == {"graph", "npc_profiles", "key_events", "player_stats"}
+              set(result) == {"graph", "npc_profiles", "key_events", "player_stats", "ending"}
               and set(result["graph"]) == {"nodes", "links"}
               and all(set(n) == {"id", "weight", "group"} for n in result["graph"]["nodes"])
               and all(set(l) == {"source", "target", "relation", "type"}
@@ -884,8 +939,9 @@ def check_character_segments():
               and ce.get_graph_data(probe) == result["graph"]
               and ce.get_key_events(probe) == result["key_events"]
               and ce.get_player_stats(probe) == result["player_stats"]
+              and ce.get_ending(probe) == result["ending"]
               and ce.get_npc_profile(probe, "唐僧") == profiles["唐僧"],
-              "4 个顶层 key 与元素字段逐字未变；磁盘缓存与 getter 读到的结构一致")
+              "5 个顶层 key（含 ending）与元素字段逐字未变；磁盘缓存与 getter 读到的结构一致")
     finally:
         ce._llm_call = original_llm_call
         ce.drop_cache(probe)
@@ -1265,6 +1321,7 @@ def main():
     check_player_identity()         # A14：玩家身份口径（主角不当 NPC、prompt 注入身份）
     check_character_segments()      # A16：人物分段提取（大文件只吃开头 8000 字的修复）
     check_session_memory()          # B14：会话脉络（早期关键节点）离线契约，同样不受服务状态影响
+    check_offline_ending()          # A17：原著结局只在终局下发（防剧透），同样离线
 
     if not check("PRE-1", SAMPLE.exists(), f"样本文件存在: {SAMPLE}"):
         return

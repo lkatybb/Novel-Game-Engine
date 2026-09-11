@@ -543,6 +543,9 @@ body[data-color-mode="dark"] .stream {
 }
 body[data-color-mode="dark"] .scene-overlay { background: rgba(0, 0, 0, 0.55); }
 .scene-overlay.show { opacity: 1; }
+/* 结局页：复用场景弹窗视觉，但不可点任意处关闭（本局终点，必须点按钮），文案可滚动 */
+.ending-overlay { cursor: default; }
+.ending-overlay .scene-card { max-height: 74vh; overflow-y: auto; }
 .scene-card {
   text-align: center;
   max-width: 620px;
