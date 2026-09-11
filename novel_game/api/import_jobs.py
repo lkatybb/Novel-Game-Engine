@@ -40,7 +40,7 @@ def create_job(filename: str, title: str) -> str | None:
         JOBS[job_id] = {
             "job_id": job_id, "status": "running", "stage": "排队中", "progress": 0,
             "novel_id": None, "chunk_count": 0, "filename": filename, "title": title,
-            "error": None,
+            "error": None, "degraded": False, "degraded_reason": None,
         }
         _running = job_id
     return job_id
@@ -88,6 +88,7 @@ def _worker(job_id: str, file_path: Path) -> None:
             )
         except Exception as e:
             logger.exception("人物提取失败，小说已入库但关系图/NPC人设暂不可用: %s", e)
+            _update(job_id, degraded=True, degraded_reason=str(e))
 
         add_novel(result["novel_id"], file_path.name, title)
         logger.info("导入完成: job_id=%s, novel_id=%s, %d段",

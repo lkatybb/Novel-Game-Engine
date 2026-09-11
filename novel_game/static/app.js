@@ -334,9 +334,14 @@ async function watchImportJob(jobId) {
     }
     if (job.status === 'done') {
       clearImportJob();
-      toast('导入完成，正在进入故事…', true);
+      if (!job.degraded) {
+        toast('导入完成，正在进入故事…', true);
+      }
       await loadLibrary();
       await startGame(job.novel_id, job.title);
+      if (job.degraded) {
+        toast('导入完成，但人物信息提取失败，关系图和 NPC 人设暂不可用', true);
+      }
       return;
     }
     if (job.status === 'error') {

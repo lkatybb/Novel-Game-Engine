@@ -37,7 +37,7 @@
     A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
            条件边拦掉主角不绕 NPC 节点（真配角照旧绕）；私聊入口对主角直接拒绝
            且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名
-    A16   离线七向断言：人物分段提取 —— 抽样覆盖到第 2 段（20 万字以上的书不再只吃开头）；
+    A16   离线七向断言：人物分段提取 —— 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）；
            节点去重取最大 weight、边去重先出现者胜、主角唯一；人设取最早段；
            事件 order 跨段按段序稠密 1..N；单段书与旧口径一致（样本 8000 字、
            事件上限 15、主角属性只调 1 次）；节点数超上限按 weight 截断且不留悬空边；
@@ -64,7 +64,7 @@
     C1     上传立即返回 job_id（不再同步返回 novel_id）
     C2     未知 job_id 查询导入进度 → 404（任务只活在内存里）
     C3     .exe 仍在同步阶段被拒（HTTP 200 + {"error": "不支持…"}，老口径不变）
-    C4     轮询导入任务直到 status=done 且 chunk_count > 0
+    C4     轮询导入任务直到 status=done 且 chunk_count > 0，并返回人物提取状态
     C5     导入进行中 /api/novel/list 仍 200 且 <1s（事件循环不再被 ingest 阻塞）
     C6     已有 running 任务时再上传 → 409（同一时刻只允许一个导入任务）
 
@@ -708,7 +708,7 @@ def check_character_segments():
 
     假 _llm_call 按 prompt 分派，并把"每段样本"回灌进图/人设/事件，用样本首二字标识
     这段落在全书的哪个位置；不联网、不掷骰子，纯结构化断言。
-      A16-1 抽样覆盖到第 2 段（20 万字以上的书不再只吃开头）
+      A16-1 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）
       A16-2 节点去重（weight 取最大）、边去重（先出现者胜）、主角唯一
       A16-3 同一角色多段人设 → 最早段胜出
       A16-4 事件 order 跨段按段序稠密 1..N
@@ -777,10 +777,12 @@ def check_character_segments():
             ]})
         return json.dumps({"stats": [{"name": "神通", "desc": "法术本领", "init": 60}]})
 
-    # 212,000 字 → 2 段；段 1 的样本是"开头…"，段 2 的样本是"尾部…"
-    head, middle, tail = "开头" * 4000, "中段" * 96000, "尾部" * 6000
-    long_text = head + middle + tail
-    single_text = "短" * 30000
+    # 恰好 2 段：段 1 的样本是"开头…"，段 2 的样本是"尾部…"（长度跟随分段粒度，不写死）
+    seg, sample = ce.EXTRACT_SEGMENT_CHARS, ce.EXTRACT_SAMPLE_CHARS
+    head, tail = "开头" * (sample // 2), "尾部" * (sample // 2)
+    pad = seg - sample
+    long_text = head + "中段" * (pad // 2) + tail + "补白" * (pad // 2)
+    single_text = "短" * (seg - 2_000)
 
     original_llm_call = ce._llm_call
     try:
@@ -1097,11 +1099,12 @@ def check_import_job():
     check("C6", status == 409 and "error" in json.loads(body),
           f"并发上传 -> HTTP {status}, body = {body.strip()}（应为 409）")
 
-    # C4：轮询到 done，且 chunk_count > 0
+    # C4：轮询到 done，且 chunk_count > 0；人物提取是否降级必须显式返回
     job = poll_import(job_id)
-    check("C4", job.get("status") == "done" and job.get("chunk_count", 0) > 0,
+    check("C4", job.get("status") == "done" and job.get("chunk_count", 0) > 0
+          and isinstance(job.get("degraded"), bool),
           f"轮询到结束 -> status={job.get('status')}, chunk_count={job.get('chunk_count')},"
-          f" novel_id={job.get('novel_id')}")
+          f" novel_id={job.get('novel_id')}, degraded={job.get('degraded')}")
 
     # 本组自建的书自己删掉，不给书架留残留
     novel_id = job.get("novel_id")

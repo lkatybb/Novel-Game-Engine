@@ -74,7 +74,7 @@ CHUNK_SIZE = 800             # 小说切片字数
 CHUNK_OVERLAP = 100         # 切片重叠字数
 
 # 人物分段提取配置
-EXTRACT_SEGMENT_CHARS = 200_000   # 分段粒度：每 20 万字一段（≈ 一本实体书的体量）
+EXTRACT_SEGMENT_CHARS = 20_000    # 分段粒度：每 2 万字一段（与 EXTRACT_SAMPLE_CHARS 同量级，提高抽样覆盖率）
 EXTRACT_SAMPLE_CHARS = 8_000      # 每段取开头 8000 字做样本（必须等于旧 max_chars：单段书口径不变）
 EXTRACT_MAX_EVENTS = 30           # 全书关键事件目标总量（按段数均分，每段夹到 3~15 条）
 EXTRACT_MAX_NODES = 60            # 合并后关系图节点上限（按 weight 降序截断，护住 D3 力导图渲染）
