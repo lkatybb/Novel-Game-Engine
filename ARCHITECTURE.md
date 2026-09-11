@@ -43,12 +43,15 @@ e:\小说\novel_game\
 │   ├── __init__.py
 │   ├── novel_parser.py           # 小说→章节切片→ChromaDB入库
 │   ├── character_extractor.py    # LLM提取人物关系JSON / NPC人设 / 关键事件 / 主角属性
+│   │                             #   分段口径：每 EXTRACT_SEGMENT_CHARS(20万字) 一段，
+│   │                             #   每段取块首 EXTRACT_SAMPLE_CHARS(8000字) 抽样，再合并去重
 │   └── prompts.py                # 所有Prompt模板集中管理
 │
 ├── api/                          # FastAPI接口层
 │   ├── __init__.py
 │   ├── main.py                   # FastAPI入口 + 静态文件挂载
-│   ├── route_novel.py            # POST /api/novel/upload
+│   ├── import_jobs.py            # 上传导入任务表：内存进度 + 后台线程（不落盘）
+│   ├── route_novel.py            # POST /api/novel/upload（异步返回job_id）/ 导入进度 / 书架
 │   ├── route_game.py             # POST /api/action (SSE)
 │   └── route_graph.py            # GET /api/novel/{id}/graph
 │

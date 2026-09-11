@@ -148,6 +148,16 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
 - **按最近更新倒序**：排序键 `novelUpdatedAt(nv)` 取该书全部存档 `updated_at` 的**最大值**，没有存档的书回落到上传时间 `uploaded_at`。时间戳是 ISO 8601 字符串，字典序比较等价于时间比较，故不引入日期库。
 - **顶部直达**：`latestSession(novels)` 跨全部书取全局最新的那条存档，在列表最上方渲染一条加粗的「继续上次游戏」（副标题是书名，`title` 提示上次动作），点击即 `resumeGame` 恢复该存档。一本书都没有存档时不渲染该条，列表只剩书本身。
 
+### 10. 人物分段提取汇总
+
+`pipeline/character_extractor.py` 抽人物关系 / NPC 人设 / 关键事件时**不再只看全书开头 8000 字**——那对百万字长篇只覆盖 0.8%。现在改成按 [`config.py`](novel_game/config.py) 的 `EXTRACT_SEGMENT_CHARS`（20 万字，≈ 一本实体书的体量）把正文切段，每段取块首 `EXTRACT_SAMPLE_CHARS`（8000 字）各抽一次，最后合并：
+
+- **分段抽样**：每段独立调一次 LLM（3 次：关系图 / 人设 / 关键事件），只在后半段出场的角色与事件不再被漏掉；单段书（≤ 20 万字）走的是同一套代码但只有 1 段，结果与旧口径逐字一致。
+- **合并口径**：节点与边按名字去重、`weight` 取最大；**只有第 1 段能声明主角**，其余段落一律降级为配角；同一角色多段人设按「最早出现的段胜出」。
+- **事件顺序**：跨段按段序重排成稠密的 `1..N`，时间线不会出现乱序。
+- **规模控制**：全书事件目标量 `EXTRACT_MAX_EVENTS`（30，按段数均分、每段夹到 3~15 条）；合并后节点按 `weight` 降序截断到 `EXTRACT_MAX_NODES`（60），被截节点的边一并丢弃，不留悬空边——[`api/route_graph.py`](novel_game/api/route_graph.py) 是一次性全量返回给 D3 力导图的，不设上限会失控。
+- **代价与边界**：抽样占全文 4%（8000 / 200000），即「每段都抽」而非「每段抽更多」，换来 LLM 调用次数的可预期——`3 × 段数 + 1`（最后一次是全书主角属性，只用第 1 段样本）。
+
 ---
 
 ## 项目结构
@@ -184,7 +194,8 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
     │   └── prompts.py          # 所有 Prompt 集中管理
     ├── api/                    # FastAPI 接口层
     │   ├── main.py             # 入口 + 静态文件挂载
-    │   ├── route_novel.py      # 上传 / 书架
+    │   ├── import_jobs.py      # 上传导入任务：内存任务表 + 后台线程 + 进度映射
+    │   ├── route_novel.py      # 上传（异步）/ 导入进度 / 书架
     │   ├── route_game.py       # 开局 / 恢复 / 动作（SSE）
     │   └── route_graph.py      # 人物关系图数据
     ├── static/                 # 前端：书架 + 游戏界面（原生 JS，无框架）
@@ -253,8 +264,9 @@ CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/api/novel/upload` | 上传小说（`multipart/form-data`，≤ 10 MB，仅 `.txt` / `.md`） |
-| `GET` | `/api/novel/list` | 书架列表 |
+| `POST` | `/api/novel/upload` | 上传小说（`multipart/form-data`，≤ 10 MB，仅 `.txt` / `.md`）。**校验同步做**（失败仍是 `{"error": ...}`），通过后立刻返回 `{"job_id": "job_xxx", "status": "running"}`，切片入库与人物提取在后台线程进行。同一时刻只允许 1 个导入任务，重复上传返回 **409** + `{"error": ...}` |
+| `GET` | `/api/novel/import/{job_id}` | 查询导入进度：`{status, stage, progress, novel_id, chunk_count, title, error}`。`stage` 为「排队中 / 向量入库 / 人物提取 / 完成」，`progress` 0~100 单调递增；未知 `job_id` → **404**（任务只在内存保留，服务重启后必然 404，前端据此提示重新上传） |
+| `GET` | `/api/novel/list` | 书架列表（导入期间照常可用） |
 | `GET` | `/api/novel/{novel_id}/graph` | 人物关系图（`nodes` + `links`） |
 | `GET` | `/api/novel/{novel_id}/character/{name}` | 单个角色档案（性格 / 目标 / 说话风格 / 关键事件 / 原著片段），关系图点击节点时用 |
 | `POST` | `/api/game/start` | 开局，入参 `{novel_id}`，返回 `session_id` + 开场场景 |
@@ -284,7 +296,7 @@ CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 | `EMBEDDING_MODEL` | `BAAI/bge-base-zh-v1.5` | 中文向量模型 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | HuggingFace 镜像（`setdefault`，可覆盖） |
 
-代码内常量：`RETRIEVAL_TOP_K=5`、`SHORT_TERM_LIMIT=5`、`CHUNK_SIZE=800`、`CHUNK_OVERLAP=100`。
+代码内常量：`RETRIEVAL_TOP_K=5`、`SHORT_TERM_LIMIT=5`、`CHUNK_SIZE=800`、`CHUNK_OVERLAP=100`、`EXTRACT_SEGMENT_CHARS=200000`（人物提取分段粒度）、`EXTRACT_SAMPLE_CHARS=8000`（每段采样字数，等于旧 `max_chars`）、`EXTRACT_MAX_EVENTS=30`（全书关键事件目标总量）、`EXTRACT_MAX_NODES=60`（合并后关系图节点上限）。
 
 LLM 客户端是**进程级单例**，带 `timeout=60s` 和 `max_retries=2`（SDK 内置对 429 / 5xx 指数退避），避免 API 挂起导致请求永久阻塞。
 
@@ -347,6 +359,7 @@ python _diag_sse.py
 | F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
 | F13 | 好感度 / 理智度 / 主角属性 | ✅ 完成（`affinity` 每角色对玩家 + `hp` 主角理智度 + `stats` 每本书 3 项由提取器按题材定：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 显示焦点角色好感与理智，属性在「行囊见闻 → 状态」段展示，`[全局状态]` 以三行新口径注入 DM / NPC） |
 | F14 | 纸感与仿真油墨 | ✅ 完成（CSS 令牌 `--paper` / `--paper-fiber` / `--ink-bleed` / `--letterpress` / `--card-veil`：纸纤维、纸页明暗与投影、洇墨与压印；浅/暗各一套，零新增依赖） |
+| F15 | 大文件导入体验 | ✅ 完成（人物提取改为「20 万字分段 + 每段块首 8000 字抽样 + 合并去重」，长篇不再只吃开头；`POST /api/novel/upload` 改后台线程导入、立即返回 `job_id`，进度走 `GET /api/novel/import/{job_id}`，前端常驻 toast 显示「向量入库 n% / 人物提取 n%」并在刷新后接着显示；同一时刻只允许 1 个导入任务，重复上传 409） |
 
 ### 明确不做
 
