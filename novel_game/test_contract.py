@@ -11,8 +11,8 @@
     python test_contract.py
 
 验证层次（环境变量 CONTRACT_SCOPE，默认 full）——快层只是"不调用"，不做简化断言：
-    full   A9/A10/A11/A13/A14 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
-    delete A9/A10/A11/A13/A14 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
+    full   A9/A10/A11/A12/A13/A14/A15 + PRE-1~3 + A6 + A1-A5/A8 + A7 + B9-B12 + B0-B7/B13/B6a/B6b + B8
+    delete A9/A10/A11/A12/A13/A14/A15 + PRE-1~3 + B9-B12 + B0-B7/B13/B6a/B6b
            （跳过 A6、/action 组、/resume 的 A7、以及最贵的 B8 重传）
     非法取值以 exit 2 报错退出，不静默回落 full。
 
@@ -26,6 +26,11 @@
            DM prompt 只许出现 1 个未触发事件名且不含 trigger_condition（防剧透）；
            角色私聊 prompt 一个未触发事件名都不许出现、不下发 trigger_condition，
            但三个自由文本容器与已触发事件照旧可用（与 A11-1 同源的 Mask 口径）
+    A12    离线六向断言：数值系统 —— DM prompt 声明 affinity/hp/stats 且不再有 val；
+           按角色好感度上下限钳制；新角色以 50 起；format_state 三行数值口径正确；
+           单字段更新不误伤其他项
+    A15    离线两向断言：本书主角属性 —— 清单外的属性名被丢弃（防 LLM 幻觉造属性）；
+           init_state 按提取器给出的 init 起算
     A13   离线四向断言：开场时间线对齐 —— 声明 order 3 补记 1/2/3；非白名单名不补记；
            已补记不重复不越界；开场 prompt 给全清单但零 trigger_condition 泄漏
     A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
@@ -69,10 +74,11 @@ BASE = os.environ.get("CONTRACT_BASE", "http://127.0.0.1:8888")
 ROOT = Path(__file__).resolve().parent
 
 # 验证层次（沿用 CONTRACT_BASE 的环境变量先例）：
-#   full   = 默认，行为与引入分层前完全一致：A9/A12/A10/A11 + B14 + PRE-1~3 + A6 + A1-A5/A8
-#            + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
-#   delete = 删除能力快层（迭代替换用）：A9/A12/A10/A11 + B14 + PRE-1~3 + B9-B12/B14e
-#            + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、/resume 的 A7 与最贵的 B8
+#   full   = 默认，行为与引入分层前完全一致：A9/A10/A11/A12/A13/A14/A15 + B14 + PRE-1~3
+#            + A6 + A1-A5/A8 + A7 + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f + B8
+#   delete = 删除能力快层（迭代替换用）：A9/A10/A11/A12/A13/A14/A15 + B14 + PRE-1~3
+#            + B9-B12/B14e + B0-B7/B13/B6a/B6b/B14f，跳过 A6、/action 组（A1-A5/A8）、
+#            /resume 的 A7 与最贵的 B8
 # 两层共用同一套断言函数、同一个 check() 口径；快层只是"不调用"，不是"简化断言"。
 SCOPE = os.environ.get("CONTRACT_SCOPE", "full")
 if SCOPE not in ("delete", "full"):
@@ -311,43 +317,86 @@ def check_offline_next_event():
 
 
 def check_offline_stats():
-    """A12：离线确定性断言——好感度(val) / 理智度(hp) 契约。
+    """A12：离线确定性断言——好感度(affinity) / 理智度(hp) / 主角属性(stats) 契约。
 
-    这两项是 DM 按人物特质裁决、被 HUD 直接消费的数值。三层都必须锁死，
+    这三项是 DM 按人物特质裁决、被 HUD 直接消费的数值。三层都必须锁死，
     否则任一环断了都会让 HUD 静默退化成不会动的死表（无任何报错）：
-      A12-1 DM prompt 的 state_changes schema 必须声明 val / hp（否则模型不会回填）
-      A12-2/3 update_state 必须钳制在 0~100（LLM 给 ±99 也不能越界污染存档）
-      A12-4 只给一项时不得误伤另一项
-      A12-5 format_state 必须以「好感度 / 理智度」口径注入 Prompt（NPC 台词据此调整语气）
+      A12-1 DM prompt 的 state_changes schema 必须声明 affinity / hp / stats，且不再有 val
+      A12-2/3 update_state 必须把每个角色的好感度钳在 0~100（LLM 给 ±999 也不能越界污染存档）
+      A12-4 好感度是"每个角色各自对玩家"的分值，新角色以 50 中位起
+      A12-5 format_state 必须以三行分列的口径注入 Prompt（谁对玩家什么态度 / 主角理智 / 本书属性）
+      A12-6 只给一项时不得误伤其他项
     """
     import memory.global_state as global_state
     from pipeline.prompts import DM_SYSTEM
 
-    check("A12-1", '"val"' in DM_SYSTEM and '"hp"' in DM_SYSTEM,
-          "DM prompt 的 state_changes schema 声明 val / hp")
+    check("A12-1",
+          all(f'"{k}"' in DM_SYSTEM for k in ("affinity", "hp", "stats"))
+          and '"val"' not in DM_SYSTEM,
+          "DM prompt 的 state_changes schema 声明 affinity / hp / stats 且不含 val")
 
     sid = "__stat_contract__"
+    original = global_state.get_player_stats
+    global_state.get_player_stats = lambda novel_id: []   # 属性清单留空：先只看好感/理智
     try:
         global_state.init_state(sid, "x")
-        global_state.update_state(sid, {"val": 100, "hp": 100})
+        global_state.update_state(sid, {"affinity": {"甲": 100, "乙": -100}, "hp": 100})
         st = global_state.get_state(sid)
-        check("A12-2", st.val == 100 and st.hp == 100,
-              f"初始 50/100 加满后钳制在上限：val={st.val} hp={st.hp}")
+        check("A12-2", st.affinity == {"甲": 100, "乙": 0} and st.hp == 100,
+              f"好感度按角色钳在上限 100：affinity={st.affinity} hp={st.hp}")
 
-        global_state.update_state(sid, {"val": -999, "hp": -999})
+        global_state.update_state(sid, {"affinity": {"甲": -999}, "hp": -999})
         st = global_state.get_state(sid)
-        check("A12-3", st.val == 0 and st.hp == 0,
-              f"大幅扣减后钳制在下限：val={st.val} hp={st.hp}")
+        check("A12-3", st.affinity["甲"] == 0 and st.hp == 0,
+              f"钳在下限 0：甲={st.affinity['甲']} hp={st.hp}")
 
-        global_state.update_state(sid, {"val": 3})
+        global_state.update_state(sid, {"affinity": {"丙": 5}})
         st = global_state.get_state(sid)
-        check("A12-4", st.val == 3 and st.hp == 0,
-              f"单字段更新不影响另一项：val={st.val} hp={st.hp}")
+        check("A12-4", st.affinity["丙"] == 55,
+              f"新角色以 50 中位起，+5 → {st.affinity['丙']}")
 
         text = global_state.format_state(sid)
-        check("A12-5", "好感度: 3/100" in text and "理智度: 0/100" in text,
-              f"format_state 注入标签：{text.splitlines()[-2:]}")
+        lines = text.splitlines()
+        ok = ("好感度（各角色对玩家）: " in text
+              and "理智度（主角自身）: 0/100" in text
+              and "主角状态属性: （本书未定义属性）" in text)
+        check("A12-5", ok, f"format_state 三行数值标签：{lines[-3:]}")
+
+        global_state.update_state(sid, {"hp": 7})
+        st = global_state.get_state(sid)
+        check("A12-6", st.hp == 7 and st.affinity == {"甲": 0, "乙": 0, "丙": 55},
+              f"单字段更新不误伤其他项：hp={st.hp} affinity={st.affinity}")
     finally:
+        global_state.get_player_stats = original
+        global_state.drop_state(sid)
+
+
+def check_player_stats():
+    """A15：离线确定性断言——本书主角属性（维度由提取器按本书题材定）。
+
+    A15-1 清单外的属性名被 update_state 丢弃（LLM 幻觉造属性不得进存档）
+    A15-2 init_state 按提取器给出的 init 起算
+    """
+    import memory.global_state as global_state
+
+    declared = [{"name": "神通", "desc": "法力与神通广大的程度", "init": 20},
+                {"name": "机敏", "desc": "见机行事的敏捷", "init": 55}]
+    original = global_state.get_player_stats
+    global_state.get_player_stats = lambda novel_id: declared
+
+    sid = "__a15_player_stats__"
+    try:
+        global_state.init_state(sid, "x")
+        st = global_state.get_state(sid)
+        check("A15-2", st.stats == {"神通": 20, "机敏": 55},
+              f"init 取自提取器：stats={st.stats}")
+
+        global_state.update_state(sid, {"stats": {"神通": 10, "幻觉属性": 30}})
+        st = global_state.get_state(sid)
+        check("A15-1", st.stats == {"神通": 30, "机敏": 55},
+              f"清单外属性被丢弃：stats={st.stats}")
+    finally:
+        global_state.get_player_stats = original
         global_state.drop_state(sid)
 
 
@@ -934,7 +983,8 @@ def main():
     print("=" * 72)
 
     check_offline_next_event()      # A9：离线断言，先跑，不受服务状态影响
-    check_offline_stats()           # A12：好感度/理智度离线契约，同样不受服务状态影响
+    check_offline_stats()           # A12：好感度/理智度/主角属性离线契约，同样不受服务状态影响
+    check_player_stats()            # A15：本书主角属性清单（维度由提取器定，幻觉属性被丢弃）
     check_offline_order_contract()  # A10：order 稠密契约，同样离线
     check_a11_masking()             # A11：A4 的 Mask 范围双向锁死（M2 条件 C-1）
     check_timeline_seed()           # A13：开场时间线对齐（前序事件补记 + 开场 prompt 防剧透）

@@ -42,7 +42,7 @@ e:\小说\novel_game\
 ├── pipeline/                     # 小说处理管线
 │   ├── __init__.py
 │   ├── novel_parser.py           # 小说→章节切片→ChromaDB入库
-│   ├── character_extractor.py    # LLM提取人物关系JSON
+│   ├── character_extractor.py    # LLM提取人物关系JSON / NPC人设 / 关键事件 / 主角属性
 │   └── prompts.py                # 所有Prompt模板集中管理
 │
 ├── api/                          # FastAPI接口层
@@ -63,7 +63,7 @@ e:\小说\novel_game\
 └── data/                         # 数据
     ├── novels/                   # 测试小说文件
     ├── sessions/                 # 存档快照（真相来源）
-    ├── character_cache/          # 人物关系 / 关键事件缓存（派生）
+    ├── character_cache/          # 人物关系 / 关键事件 / 主角属性（派生）
     └── session_memory/           # 会话脉络：早期关键节点缓存（派生，随删存档/删小说清理）
 ```
 
@@ -80,8 +80,9 @@ class GameState(BaseModel):
     player_location: str = "起始场景"
     inventory: list[str] = []
     flags: dict[str, bool] = {}          # 事件标记（如"已拿钥匙"）
-    val: int = 50                        # 主状态值 0-100（如理性值）
-    hp: int = 100                        # 生命值
+    affinity: dict[str, int] = {}        # 每个角色对玩家的好感度 0-100（新角色以 50 起）
+    hp: int = 100                        # 主角理智度 0-100
+    stats: dict[str, int] = {}           # 本书主角属性（维度由提取器按题材定，见 §3.x 提取器）
     current_npcs: list[str] = []
     triggered_events: list[str] = []     # 已触发的关键事件名
 
@@ -140,6 +141,8 @@ data: {"type": "done"}
 5. 编写 `pipeline/character_extractor.py`（提前到Phase 1）：
    - LLM提取人物关系JSON（nodes+links）
    - LLM提取NPC人设档案（性格、秘密、说话风格）
+   - LLM提取关键事件清单（event_name / trigger_condition / order）
+   - LLM提取本书主角属性维度（3 项，贴合题材与主角身份，随同一份缓存落盘）
    - 缓存在内存字典中
 6. 编写 `memory/long_term.py`：
    - 封装ChromaDB检索接口

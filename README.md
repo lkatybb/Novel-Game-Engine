@@ -100,15 +100,17 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
 
 ---
 
-### 6. 好感度与理智度
+### 6. 好感度、理智度与主角属性
 
-两项数值由 DM（不是单独的裁判 Agent）在推演剧情时顺手裁决，随每回合与 `story` 一起下发：
+三组数值由 DM（不是单独的裁判 Agent）在推演剧情时顺手裁决，随每回合与 `story` 一起下发：
 
-- **复用既有字段**：`GameState.val`（默认 50）与 `GameState.hp`（默认 100）本就是 state 模型里的字段，此前从未被填充；本次只把它们**定义为好感度 / 理智度**并在 Prompt 里激活，**没有新增任何 state 字段或 SSE 事件**（接口零变更）。
-- **按人物特质裁决**：`DM_SYSTEM` 要求 DM 依据在场人物的性格、立场、忌讳与看重之处（来自原著片段与已有剧情）判断观感变化，并在 `state_changes` 中给出 `val` / `hp`：普通互动 ±1~3、关键抉择 ±4~8、重大转折 ±10，无变化填 0（防抖，不允许凭空涨落）。
-- **口径**：好感度是**全局关系值**（在场人物对玩家的整体观感），理智度是主角自身的精神状态；两者都在 [`memory/global_state.py`](novel_game/memory/global_state.py) 的 `update_state` 里钳制在 0~100。
-- **注入与展示**：`format_state` 以「好感度 / 理智度」注入 DM 与 NPC，NPC 台词会据此调整语气；顶栏 HUD 用两条窄条实时展示（好感＝青绿、理智＝赭黄）。
-- **回归闸门**：`test_contract.py` 的 A12 离线断言锁死「Prompt 声明 → 数值钳制 → 注入标签」三层，防止 Prompt 与 HUD 之间静默脱钩成不会动的死表。
+- **好感度 `affinity`（每个角色各自对玩家）**：`dict[角色名 → 0~100]`，新角色以 50 中位起。`DM_SYSTEM` 要求 DM 依据该角色的性格、立场、忌讳与看重之处（来自原著片段与已有剧情）**单独**判断，只写被玩家本回合行为**直接触动**的人物，未出场的一律不写。
+- **理智度 `hp`（主角自身）**：`int`，全局单值，默认 100。
+- **主角属性 `stats`（每本书一套）**：`dict[属性名 → 0~100]`，**维度不写死**——由 `pipeline/character_extractor.py` 在上传时按本书题材与主角身份提取 3 项（修仙文得「神通 / 机敏 / 名望」，悬疑文得「理智 / 线索 / 胆识」），随人物缓存一起落盘（`player_stats`）。`DM_SYSTEM` 只允许在清单内挑 key，`update_state` 会丢弃清单外的属性名，挡住 LLM 幻觉造属性。
+- **幅度**：普通互动 ±1~3、关键抉择 ±4~8、重大转折 ±10；**无变化不写，而不是填 0**（防抖，不允许凭空涨落）。三项都在 [`memory/global_state.py`](novel_game/memory/global_state.py) 的 `update_state` 里钳制在 0~100。
+- **注入与展示**：`format_state` 以「好感度（各角色对玩家）／理智度（主角自身）／主角状态属性」三行注入 DM 与 NPC，NPC 台词会据此调整语气；顶栏 HUD 用两条窄条展示（好感＝青绿，label 显示当前焦点角色名；理智＝赭黄），本书属性在菜单 →「行囊见闻」的「状态」段展示（名称 / 数值 / 说明，说明来自 `player_stats` 的 `desc`）。
+- **接口影响（**非**零变更）**：本次移除了旧的全局 `GameState.val`（它对应的是"在场人物对玩家的整体观感"这一错误口径），新增 `affinity` / `stats` 两个 state 字段；SSE 事件类型不变，`state` 帧里多出这两个字段，另加一个只读的 `stats_meta`（属性名 + 说明，不含数值）供前端渲染属性段。老存档里的 `val` 由 pydantic 默认 `extra='ignore'` 丢弃，**不需要迁移脚本**；老书（缓存里没有 `player_stats`）属性段显示为空，游戏照跑，重传该书即获得属性系统。
+- **回归闸门**：`test_contract.py` 的 A12 离线断言锁死「Prompt 声明 → 数值钳制 → 注入标签」三层（A12-1 兼查旧 `val` 已从 schema 消失），A15 锁死属性清单白名单与 init 起点，防止 Prompt 与 HUD 之间静默脱钩成不会动的死表。
 
 ### 7. 纸感与仿真油墨
 
@@ -161,7 +163,7 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
     │   └── dm.py               # 真 token 流式 + 增量 JSON 解析
     ├── pipeline/               # 小说处理管线
     │   ├── novel_parser.py     # 切片 + Embedding 入库
-    │   ├── character_extractor.py  # LLM 抽取人物关系 / NPC 人设 / 关键事件
+    │   ├── character_extractor.py  # LLM 抽取人物关系 / NPC 人设 / 关键事件 / 主角属性
     │   └── prompts.py          # 所有 Prompt 集中管理
     ├── api/                    # FastAPI 接口层
     │   ├── main.py             # 入口 + 静态文件挂载
@@ -326,7 +328,7 @@ python _diag_sse.py
 | F10 | 场景氛围特效 | ✅ 完成（前端 `detectSceneFx` 按场景名/描述关键词判定：`rain` 双层斜雨丝、`shake` 纸面入场震抖；写 `body[data-scene-fx]`，纯 CSS `transform` 合成层动画，零接口变更） |
 | F11 | 角色私聊（只读旁路） | ✅ 完成（独立 `POST /api/game/chat`，不写状态、不落盘、复用 A11 Mask 防剧透口径） |
 | F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
-| F13 | 好感度 / 理智度 | ✅ 完成（激活 `GameState.val` / `hp`：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 实时展示，`[全局状态]` 以新口径注入 DM / NPC） |
+| F13 | 好感度 / 理智度 / 主角属性 | ✅ 完成（`affinity` 每角色对玩家 + `hp` 主角理智度 + `stats` 每本书 3 项由提取器按题材定：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 显示焦点角色好感与理智，属性在「行囊见闻 → 状态」段展示，`[全局状态]` 以三行新口径注入 DM / NPC） |
 | F14 | 纸感与仿真油墨 | ✅ 完成（CSS 令牌 `--paper` / `--paper-fiber` / `--ink-bleed` / `--letterpress` / `--card-veil`：纸纤维、纸页明暗与投影、洇墨与压印；浅/暗各一套，零新增依赖） |
 
 ### 明确不做

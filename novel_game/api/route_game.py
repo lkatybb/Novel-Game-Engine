@@ -37,8 +37,11 @@ def _enrich_state(state, novel_id):
     next_event 取"未触发事件中 order 最小者"，不假设 order 连续——LLM 抽取的
     编号可能跳号或缺字段（缺字段由提取器补 999），按 max(已触发)+1 精确匹配会
     让 next_event 静默变 null，使前端退化成"全隐藏"。
+
+    stats_meta：本书主角属性维度的名称与说明（不含数值——数值在 state.stats 里），
+    供前端属性面板显示每项属性的含义。
     """
-    from pipeline.character_extractor import get_key_events
+    from pipeline.character_extractor import get_key_events, get_player_stats
     all_events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
     triggered = list(state.triggered_events)
 
@@ -55,6 +58,8 @@ def _enrich_state(state, novel_id):
         {"event_name": nxt["event_name"], "order": nxt.get("order", 999)} if nxt else None
     )
     enriched["total"] = len(all_events)
+    enriched["stats_meta"] = [{"name": s["name"], "desc": s.get("desc", "")}
+                              for s in get_player_stats(novel_id)]
     return enriched
 
 

@@ -763,6 +763,32 @@ body[data-color-mode="dark"] .modal-inner {
   font-size: 12px; letter-spacing: 0.06em;
 }
 .chip-list .empty-hint { padding: 0; }
+
+/* 状态段：本书主角属性（维度由提取器按本书题材给出） */
+.stats-list { display: flex; flex-direction: column; gap: 12px; }
+.stat-row { display: flex; flex-direction: column; gap: 5px; }
+.stat-head { display: flex; align-items: baseline; gap: 8px; }
+.stat-name {
+  font-family: var(--font-song);
+  font-size: 14px; letter-spacing: 0.04em;
+  color: var(--ink-0);
+}
+.stat-val { font-family: var(--font-sans); font-size: 11px; color: var(--ink-2); }
+.stat-desc {
+  font-family: var(--font-sans);
+  font-size: 11px; letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+.stat-track {
+  width: 100%; height: 3px; border-radius: 2px;
+  background: var(--line); overflow: hidden;
+}
+.stat-fill {
+  height: 100%; width: 0%;
+  background: var(--ink-1);
+  transition: width 0.4s ease;
+}
+.stats-list .empty-hint { padding: 0; }
 .tl-item {
   display: flex; gap: 10px; align-items: baseline;
   padding: 9px 0;

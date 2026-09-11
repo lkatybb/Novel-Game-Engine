@@ -11,8 +11,9 @@ class GameState(BaseModel):
     player_location: str = "起始场景"
     inventory: list[str] = Field(default_factory=list)
     flags: dict[str, bool] = Field(default_factory=dict)
-    val: int = 50  # 主状态值 0-100
-    hp: int = 100
+    affinity: dict[str, int] = Field(default_factory=dict)  # 每个角色对玩家的好感度 0-100
+    hp: int = 100                                           # 主角理智度 0-100（全局单值）
+    stats: dict[str, int] = Field(default_factory=dict)     # 本书主角属性（由提取器定义）
     current_npcs: list[str] = Field(default_factory=list)
     triggered_events: list[str] = Field(default_factory=list)  # 已触发的关键事件名
 

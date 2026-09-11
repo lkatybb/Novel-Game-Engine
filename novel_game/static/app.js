@@ -30,13 +30,14 @@ const dom = {
   typingIndicator: $('typingIndicator'),
   choices: $('choices'), freeForm: $('freeForm'), freeInput: $('freeInput'),
   meterFill: $('meterFill'), meterText: $('meterText'),
-  valFill: $('valFill'), valText: $('valText'),
+  valFill: $('valFill'), valText: $('valText'), valLabel: $('valLabel'),
   hpFill: $('hpFill'), hpText: $('hpText'),
   progressFill: $('progressFill'),
   // 菜单
   menuPanel: $('menuPanel'), menuSummary: $('menuSummary'),
   timelinePanel: $('timelinePanel'), timelineList: $('timelineList'),
   statusPanel: $('statusPanel'), inventoryList: $('inventoryList'), flagsList: $('flagsList'),
+  statsList: $('statsList'),
   chatBtn: $('chatBtn'), chatPanel: $('chatPanel'), chatNpcSelect: $('chatNpcSelect'),
   chatLog: $('chatLog'), chatForm: $('chatForm'), chatInput: $('chatInput'), chatSend: $('chatSend'),
   resumeBtn: $('resumeBtn'), timelineBtn: $('timelineBtn'), statusBtn: $('statusBtn'),
@@ -61,6 +62,8 @@ const app = {
   sceneModalOpen: false,   // 场景弹窗打开时屏蔽翻页点击
   chat: { npc: '', busy: false, logs: {} },  // 私聊记录只在前端：服务端只读，不落盘
   chatRoster: null,        // 本作可私聊角色名（首次打开时拉取）
+  focusNpc: null,          // 顶栏好感度当前展示的角色
+  affinitySnapshot: {},    // 上一轮好感度，用于 diff 出"本回合被触动的角色"
 };
 
 /* --------------------------------------------------------------------------
@@ -335,6 +338,7 @@ async function startGame(novelId, title) {
     app.novelId = novelId;
     app.sessionId = data.session_id;
     resetChat();                          // 换会话：私聊面板与角色列表重来
+    resetStatFocus();                     // 换会话：好感度焦点与快照重来
     enterGame(title);
     applyState(data.state);
     beginTurn({ scene: data.scene || null });
@@ -356,6 +360,7 @@ async function resumeGame(sessionId, novelId, title) {
     app.novelId = novelId;
     app.sessionId = data.session_id;
     resetChat();                          // 换会话：私聊面板与角色列表重来
+    resetStatFocus();                     // 换会话：好感度焦点与快照重来
     enterGame(title || data.novel_id);
     applyState(data.state);
     beginTurn({ scene: null });            // 恢复存档不弹场景窗
@@ -960,10 +965,39 @@ function applyState(state) {
   updateProgress();
 }
 
-/** 好感度 / 理智度：DM 按人物特质裁决的 0~100 数值（后端 update_state 已钳制） */
+/** 好感度（焦点角色对玩家）/ 理智度：DM 按人物特质裁决的 0~100 数值（后端已钳制）
+ *
+ * 好感度现在是"每个角色各自对玩家"的分值，顶栏一条窄条放不下全部角色，故只显示
+ * 焦点角色：本轮 |变化量| 最大的那位；本轮都没变化就沿用上次焦点（焦点语义，不是
+ * 兜底）；从未有过变化则取名单最后一位（最近互动到的角色）。
+ */
 function updateStats(state) {
-  dom.valFill.style.width = `${state.val}%`;
-  dom.valText.textContent = `${state.val}`;
+  const aff = state.affinity && typeof state.affinity === 'object' && !Array.isArray(state.affinity)
+    ? state.affinity : {};
+  const prev = app.affinitySnapshot;
+  let best = null;
+  let bestDelta = 0;
+  Object.keys(aff).forEach((name) => {
+    if (prev[name] === undefined) return;                 // 新出现的角色不算"变化"
+    const delta = Math.abs(aff[name] - prev[name]);
+    if (delta > bestDelta) { bestDelta = delta; best = name; }
+  });
+  if (best) app.focusNpc = best;
+  if (!app.focusNpc || !(app.focusNpc in aff)) {
+    const names = Object.keys(aff);
+    app.focusNpc = names.length ? names[names.length - 1] : null;
+  }
+  app.affinitySnapshot = { ...aff };
+
+  if (app.focusNpc) {
+    dom.valLabel.textContent = `好感·${app.focusNpc}`;
+    dom.valFill.style.width = `${aff[app.focusNpc]}%`;
+    dom.valText.textContent = `${aff[app.focusNpc]}`;
+  } else {
+    dom.valLabel.textContent = '好感';
+    dom.valFill.style.width = '0%';
+    dom.valText.textContent = '—';
+  }
   dom.hpFill.style.width = `${state.hp}%`;
   dom.hpText.textContent = `${state.hp}`;
 }
@@ -1065,6 +1099,56 @@ function renderStatus() {
       dom.flagsList.appendChild(chip);
     });
   }
+
+  // 状态段：本书主角属性（名称 / 数值 / 说明）。维度由提取器按本书题材给出，
+  // 老书或提取失败时 stats 为空 → 显示空态，不临时造一套维度。
+  const stats = st.stats && typeof st.stats === 'object' && !Array.isArray(st.stats) ? st.stats : {};
+  const descOf = {};
+  (Array.isArray(st.stats_meta) ? st.stats_meta : []).forEach((m) => {
+    if (m && m.name) descOf[m.name] = m.desc || '';
+  });
+  dom.statsList.innerHTML = '';
+  const statNames = Object.keys(stats);
+  if (!statNames.length) {
+    const hint = document.createElement('div');
+    hint.className = 'empty-hint';
+    hint.textContent = '本书未定义属性';
+    dom.statsList.appendChild(hint);
+    return;
+  }
+  statNames.forEach((name) => {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const head = document.createElement('div');
+    head.className = 'stat-head';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'stat-name';
+    nameEl.textContent = name;                      // textContent 防注入
+    const valEl = document.createElement('span');
+    valEl.className = 'stat-val';
+    valEl.textContent = `${stats[name]}/100`;
+    head.append(nameEl, valEl);
+    const track = document.createElement('div');
+    track.className = 'stat-track';
+    const fill = document.createElement('div');
+    fill.className = 'stat-fill';
+    fill.style.width = `${stats[name]}%`;
+    track.appendChild(fill);
+    row.append(head, track);
+    if (descOf[name]) {
+      const descEl = document.createElement('span');
+      descEl.className = 'stat-desc';
+      descEl.textContent = descOf[name];
+      row.appendChild(descEl);
+    }
+    dom.statsList.appendChild(row);
+  });
+}
+
+/** 清空好感度焦点与快照（换会话时调用，避免上一局的焦点串到新局） */
+function resetStatFocus() {
+  app.focusNpc = null;
+  app.affinitySnapshot = {};
 }
 
 /* --------------------------------------------------------------------------

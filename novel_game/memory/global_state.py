@@ -5,7 +5,7 @@ import logging
 from models import GameState
 from collections import deque
 from config import SHORT_TERM_LIMIT
-from pipeline.character_extractor import get_key_events
+from pipeline.character_extractor import get_key_events, get_player_stats
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,11 @@ def restore_session(session_id: str, game_state: dict, short_term_memory: list[d
 
 
 def init_state(session_id: str, novel_id: str):
-    _states[session_id] = GameState(novel_id=novel_id)
+    """新建会话状态：本书主角属性的起点由提取器给（老书无属性 → 属性面板为空）"""
+    state = GameState(novel_id=novel_id)
+    for s in get_player_stats(novel_id):
+        state.stats[s["name"]] = _clamp_int(s.get("init"), 50)
+    _states[session_id] = state
 
 
 def get_state(session_id: str) -> GameState:
@@ -53,6 +57,14 @@ def _as_str_list(value) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(v).strip() for v in value if v is not None and str(v).strip()]
     return [str(value).strip()] if str(value).strip() else []
+
+
+def _clamp_int(value, default: int) -> int:
+    """转 int 并钳制到 0~100；转不了就取 default"""
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _accept_triggered(state: GameState, names) -> list[str]:
@@ -105,17 +117,30 @@ def update_state(session_id: str, state_changes: dict):
             state.inventory.append(item)
     for flag_name in _as_str_list(state_changes.get("flag")):
         state.flags[flag_name] = True
-    # val / hp 是 DM 按人物特质裁决的两项数值：好感度 / 理智度，钳制在 0~100
-    if state_changes.get("val"):
-        try:
-            state.val = max(0, min(100, state.val + int(state_changes["val"])))
-        except (TypeError, ValueError):
-            pass
+    # 三项数值：affinity 按角色累积（该角色对玩家的好感）/ hp 主角理智度 / stats 本书属性
+    affinity_delta = state_changes.get("affinity")
+    if isinstance(affinity_delta, dict):
+        for name, delta in affinity_delta.items():
+            name = str(name).strip()
+            if not name:
+                continue
+            try:
+                delta = int(delta)
+            except (TypeError, ValueError):
+                continue
+            # 新角色以 50 中位起（未互动过的角色不该有倾向）
+            state.affinity[name] = _clamp_int(state.affinity.get(name, 50) + delta, 50)
     if state_changes.get("hp"):
-        try:
-            state.hp = max(0, min(100, state.hp + int(state_changes["hp"])))
-        except (TypeError, ValueError):
-            pass
+        state.hp = _clamp_int(state.hp + state_changes["hp"], state.hp)
+    stats_delta = state_changes.get("stats")
+    if isinstance(stats_delta, dict):
+        for name, delta in stats_delta.items():
+            name = str(name).strip()
+            # 本书属性清单由提取器定义，清单外的名字（LLM 幻觉）一律丢弃
+            if name not in state.stats:
+                logger.info("忽略未定义的属性: %s", name)
+                continue
+            state.stats[name] = _clamp_int(state.stats[name] + delta, state.stats[name])
     for en in _accept_triggered(
         state, _as_str_list(state_changes.get("triggered_events"))
     ):
@@ -205,10 +230,25 @@ def get_next_event(session_id: str) -> dict | None:
 
 
 def format_state(session_id: str) -> str:
-    """格式化为Prompt可用文本"""
+    """格式化为Prompt可用文本
+
+    三项数值口径：
+      affinity —— 每个角色「对玩家」的好感度（谁对玩家什么态度，DM 必须按人物分别判断）
+      hp       —— 主角自身的理智度（全局单值）
+      stats    —— 本书主角属性（维度由提取器按本书题材定，desc 一并给出以说明语义）
+    """
     s = get_state(session_id)
     items = ", ".join(s.inventory) if s.inventory else "无"
     flags = ", ".join(s.flags.keys()) if s.flags else "无"
     triggered = ", ".join(s.triggered_events) if s.triggered_events else "（尚未发生任何关键事件）"
+    affinity = ("、".join(f"{n} {v}/100" for n, v in s.affinity.items())
+                if s.affinity else "（尚无互动过的角色）")
+    stats_meta = {p["name"]: p.get("desc", "") for p in get_player_stats(s.novel_id)}
+    stats = ("、".join(f"{n}({stats_meta[n]}) {v}/100" if stats_meta.get(n) else f"{n} {v}/100"
+                       for n, v in s.stats.items())
+             if s.stats else "（本书未定义属性）")
     return (f"当前位置: {s.player_location}\n物品: {items}\n事件标记: {flags}\n"
-            f"已触发关键事件: {triggered}\n好感度: {s.val}/100\n理智度: {s.hp}/100")
+            f"已触发关键事件: {triggered}\n"
+            f"好感度（各角色对玩家）: {affinity}\n"
+            f"理智度（主角自身）: {s.hp}/100\n"
+            f"主角状态属性: {stats}")

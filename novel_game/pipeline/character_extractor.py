@@ -66,6 +66,58 @@ def normalize_event_orders(events: list[dict]) -> list[dict]:
     return [dict(e, order=i) for i, e in enumerate(ordered, start=1)]
 
 
+_STAT_COUNT = 3            # 本书主角属性维度数量（多了顶栏与 Prompt 都吃不消）
+_STAT_INIT_DEFAULT = 50    # init 缺失/非法时的中位起点（与"新角色好感度 50"同口径）
+
+
+def _extract_player_stats(text_sample: str, protagonist: str) -> list[dict]:
+    """第四步：提取本书主角的属性维度（该书的"智商/灵力/人脉"等）。
+
+    属性由书决定，不是固定的四维：修仙文得「灵力/境界」，豪门文得「财富/人脉」，
+    悬疑文得「线索/胆识」。非关键路径——失败返回空列表，游戏照常跑（属性面板留空），
+    绝不用固定维度兜底。
+
+    Returns: [{"name": str, "desc": str, "init": int 0~100}, ...]（最多 _STAT_COUNT 项）
+    """
+    who = f"主角「{protagonist}」" if protagonist else "主角"
+    prompt = f"""你是小说分析专家。为这本小说的{who}设计 {_STAT_COUNT} 项可量化的属性。
+
+要求：
+- 必须贴合本书题材与主角身份（修仙文的「灵力/境界」，豪门文的「财富/人脉」，悬疑文的「线索/胆识」）
+- 每项 2-4 个汉字，互不重复，能随剧情涨落
+- init 是故事开头该属性的初始值（0~100 的整数）
+
+输出JSON格式：
+{{
+  "stats": [
+    {{"name": "属性名", "desc": "一句话说明（10-20字）", "init": 20}}
+  ]
+}}"""
+
+    try:
+        stats = json.loads(_llm_call(prompt, text_sample)).get("stats", [])
+    except Exception as e:
+        logger.warning("主角属性提取失败，本作不启用属性面板: %s", e)
+        return []
+
+    cleaned = []
+    for s in stats if isinstance(stats, list) else []:
+        if not isinstance(s, dict) or not str(s.get("name", "")).strip():
+            continue
+        try:
+            init = int(s.get("init", _STAT_INIT_DEFAULT))
+        except (TypeError, ValueError):
+            init = _STAT_INIT_DEFAULT
+        cleaned.append({
+            "name": str(s["name"]).strip(),
+            "desc": str(s.get("desc", "")).strip(),
+            "init": max(0, min(100, init)),
+        })
+        if len(cleaned) >= _STAT_COUNT:
+            break
+    return cleaned
+
+
 def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) -> dict:
     """
     从小说文本中提取人物关系和NPC人设
@@ -78,7 +130,9 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
     Returns:
         {
             "graph": {"nodes": [...], "links": [...]},
-            "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...}
+            "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...},
+            "key_events": [{"event_name", "trigger_condition", "order", "key_characters"}, ...],
+            "player_stats": [{"name", "desc", "init"}, ...]
         }
     """
     # 检查缓存（内存 → 磁盘）
@@ -173,19 +227,28 @@ def extract_characters(novel_id: str, novel_text: str, max_chars: int = 8000) ->
         e.setdefault("key_characters", [])
     key_events = normalize_event_orders(key_events)
 
+    # ---- 第四步：提取本书主角的属性维度（属性由书决定，非固定四维） ----
+    protagonist = next((n["id"] for n in graph_data.get("nodes", [])
+                        if n.get("id") and n.get("group") == "主角"), "")
+
+    logger.info("开始提取主角属性维度...")
+    player_stats = _extract_player_stats(text_sample, protagonist)
+
     # 缓存（内存 + 磁盘）
     result = {
         "graph": graph_data,
         "npc_profiles": npc_profiles,
         "key_events": key_events,
+        "player_stats": player_stats,
     }
     _cache[novel_id] = result
     _save_to_disk(novel_id, result)
 
-    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件",
+    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性",
                 len(graph_data.get("nodes", [])),
                 len(graph_data.get("links", [])),
-                len(key_events))
+                len(key_events),
+                len(player_stats))
 
     return result
 
@@ -240,6 +303,17 @@ def is_protagonist(novel_id: str, name: str) -> bool:
     兼容 LLM 用正文简称回填的情况：图里是「孙悟空」，Router 会回「悟空」。
     """
     return bool(name) and any(name in p for p in get_protagonist_names(novel_id))
+
+
+def get_player_stats(novel_id: str) -> list[dict]:
+    """本书主角的属性维度（name/desc/init），老书或提取失败时为空列表。
+
+    空列表是合法结果：属性功能整体关闭（面板留空、游戏照常跑），不临时造一套维度。
+    """
+    if not _ensure_loaded(novel_id):
+        return []
+    return [s for s in _cache[novel_id].get("player_stats", [])
+            if isinstance(s, dict) and s.get("name")]
 
 
 def get_key_events(novel_id: str) -> list[dict]:

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>小说互动游戏引擎</title>
-  <link rel="stylesheet" href="/style.css?v=14">
+  <link rel="stylesheet" href="/style.css?v=15">
 </head>
 <body data-mode="home" data-color-mode="light">
   <!-- 背景层 -->
@@ -62,10 +62,10 @@
           <div class="meter-track"><div class="meter-fill" id="meterFill"></div></div>
           <span class="tiny" id="meterText">0 / 0</span>
         </div>
-        <div class="meter" title="好感度：在场人物对你的整体观感">
-          <span class="status-label">好感</span>
+        <div class="meter" title="好感度：该角色对你的好感">
+          <span class="status-label" id="valLabel">好感</span>
           <div class="meter-track track-mini"><div class="meter-fill fill-val" id="valFill"></div></div>
-          <span class="tiny" id="valText">50</span>
+          <span class="tiny" id="valText">—</span>
         </div>
         <div class="meter" title="理智度：主角此刻的精神状态">
           <span class="status-label">理智</span>
@@ -136,6 +136,8 @@
         <div class="chip-list" id="inventoryList"></div>
         <h3 class="status-h">见闻</h3>
         <div class="chip-list" id="flagsList"></div>
+        <h3 class="status-h">状态</h3>
+        <div class="stats-list" id="statsList"></div>
       </div>
       <div class="chat-panel" id="chatPanel" hidden>
         <h3 class="status-h">私聊</h3>
@@ -162,6 +164,6 @@
     <p class="scene-tap">轻触任意处继续</p>
   </div>
 
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>
