@@ -54,7 +54,10 @@
             font-family: var(--font-sans); font-size: 11px; color: var(--ink-2);
             letter-spacing: 0.2em; margin-left: 10px;
         }
-        .controls { display: flex; align-items: center; gap: 10px; }
+        .controls {
+            display: flex; align-items: center; justify-content: flex-end;
+            gap: 10px; flex-wrap: wrap;
+        }
         .controls input {
             border: 1px solid var(--line); background: transparent;
             color: var(--ink-0); padding: 6px 12px; border-radius: 6px;
@@ -67,6 +70,9 @@
             cursor: pointer; transition: all 0.2s ease;
         }
         .controls button:hover { border-color: var(--ink-0); }
+        .controls .view-button {
+            min-width: 32px; padding: 6px 9px; font-size: 14px;
+        }
 
         svg { display: block; }
 
@@ -254,6 +260,10 @@
             <input type="text" id="novel-id" placeholder="novel_id">
             <button onclick="loadGraph()">加载</button>
             <button onclick="toggleLabels()" id="btn-toggle">显示关系标签</button>
+            <button class="view-button" onclick="zoomOut()" title="缩小">−</button>
+            <button class="view-button" onclick="zoomIn()" title="放大">＋</button>
+            <button onclick="fitView()" title="让整张关系图适应窗口">适应窗口</button>
+            <button onclick="resetView()" title="恢复默认视图">重置视图</button>
         </div>
     </div>
 
@@ -273,6 +283,8 @@
         let linkLabelsVisible = false;
         let simulation = null;
         let currentNovelId = '';
+        let zoomBehavior = null;
+        let graphViewport = null;
 
         function esc(v) {
             return String(v == null ? '' : v).replace(/[&<>"]/g,
@@ -340,6 +352,40 @@
                 linkLabelsVisible ? '隐藏关系标签' : '显示关系标签';
         }
 
+        function fitView() {
+            if (!zoomBehavior || !graphViewport) return;
+            const svg = d3.select('#graph');
+            const bounds = graphViewport.node().getBBox();
+            if (!bounds.width || !bounds.height) return;
+
+            const width = window.innerWidth;
+            const height = window.innerHeight - 62;
+            const padding = 56;
+            const scale = Math.max(0.15, Math.min(2,
+                Math.min((width - padding * 2) / bounds.width,
+                         (height - padding * 2) / bounds.height)));
+            const tx = width / 2 - scale * (bounds.x + bounds.width / 2);
+            const ty = height / 2 - scale * (bounds.y + bounds.height / 2);
+            svg.transition().duration(350)
+                .call(zoomBehavior.transform,
+                    d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+
+        function zoomIn() {
+            if (zoomBehavior) d3.select('#graph').transition().duration(180)
+                .call(zoomBehavior.scaleBy, 1.25);
+        }
+
+        function zoomOut() {
+            if (zoomBehavior) d3.select('#graph').transition().duration(180)
+                .call(zoomBehavior.scaleBy, 0.8);
+        }
+
+        function resetView() {
+            if (zoomBehavior) d3.select('#graph').transition().duration(250)
+                .call(zoomBehavior.transform, d3.zoomIdentity);
+        }
+
         function renderLegend() {
             const legend = d3.select('#legend');
             legend.html('');
@@ -380,19 +426,19 @@
             renderLegend();
 
             const svg = d3.select('#graph');
+            if (simulation) simulation.stop();
             svg.selectAll('*').remove();
             const width = window.innerWidth, height = window.innerHeight - 62;
             svg.attr('width', width).attr('height', height);
-
-            simulation = d3.forceSimulation(nodes)
-                .force('link', d3.forceLink(links).id(d => d.id).distance(130))
-                .force('charge', d3.forceManyBody().strength(-420))
-                .force('center', d3.forceCenter(width / 2, height / 2))
-                .velocityDecay(0.4);
+            graphViewport = svg.append('g').attr('class', 'graph-viewport');
+            zoomBehavior = d3.zoom().scaleExtent([0.15, 5]);
+            svg.call(zoomBehavior).on('zoom', (e) => {
+                graphViewport.attr('transform', e.transform);
+            });
 
             const tooltip = d3.select('#tooltip');
 
-            const linkGroup = svg.selectAll('.link').data(links).enter().append('g')
+            const linkGroup = graphViewport.selectAll('.link').data(links).enter().append('g')
                 .attr('class', 'link');
 
             linkGroup.append('line')
@@ -402,7 +448,7 @@
                 .text(d => d.relation || d.type || '');
 
             // 用与真实节点相同的 CSS 路径测宽，避免测量字体与渲染字体不一致
-            const tmpWrap = svg.append('g').attr('class', 'node')
+            const tmpWrap = graphViewport.append('g').attr('class', 'node')
                 .style('visibility', 'hidden');
             const tmpText = tmpWrap.append('g').attr('class', 'pill').append('text').attr('y', 1);
             nodes.forEach(d => {
@@ -413,7 +459,16 @@
             });
             tmpWrap.remove();
 
-            const node = svg.selectAll('.node').data(nodes).enter().append('g')
+            simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(96))
+                .force('charge', d3.forceManyBody().strength(-230))
+                .force('collide', d3.forceCollide(d => d.pillW / 2 + 7))
+                .force('x', d3.forceX(width / 2).strength(0.08))
+                .force('y', d3.forceY(height / 2).strength(0.08))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .velocityDecay(0.4);
+
+            const node = graphViewport.selectAll('.node').data(nodes).enter().append('g')
                 .attr('class', d => {
                     if (d.group === '主角') return 'node lead';
                     if (d.group === '配角团') return 'node group';
@@ -427,7 +482,10 @@
                     .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
                     .on('end', (e, d) => {
                         if (!e.active) simulation.alphaTarget(0);
-                        // 拖拽后保持固定，不自动回弹
+                        // 松手后释放固定点，让关系网继续受力，关联人物也会跟着调整
+                        d.fx = null;
+                        d.fy = null;
+                        simulation.alpha(0.2).restart();
                     }));
 
             const pill = node.append('g').attr('class', 'pill');
@@ -533,12 +591,19 @@
                     });
                 node.attr('transform', d => `translate(${d.x},${d.y})`);
             });
+            simulation.on('end.fit', fitView);
+            setTimeout(fitView, 250);
         }
 
         // 窗口缩放时重设中心
         window.addEventListener('resize', () => {
             if (simulation) {
-                simulation.force('center', d3.forceCenter(window.innerWidth / 2, (window.innerHeight - 62) / 2));
+                const width = window.innerWidth;
+                const height = window.innerHeight - 62;
+                d3.select('#graph').attr('width', width).attr('height', height);
+                simulation.force('x').x(width / 2);
+                simulation.force('y').y(height / 2);
+                simulation.force('center', d3.forceCenter(width / 2, height / 2));
                 simulation.alpha(0.3).restart();
             }
         });

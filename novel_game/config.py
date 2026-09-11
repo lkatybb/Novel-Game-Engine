@@ -78,6 +78,7 @@ EXTRACT_SEGMENT_CHARS = 20_000    # 分段粒度：每 2 万字一段（与 EXTR
 EXTRACT_SAMPLE_CHARS = 8_000      # 每段取开头 8000 字做样本（必须等于旧 max_chars：单段书口径不变）
 EXTRACT_MAX_EVENTS = 30           # 全书关键事件目标总量（按段数均分，每段夹到 3~15 条）
 EXTRACT_MAX_NODES = 60            # 合并后关系图节点上限（按 weight 降序截断，护住 D3 力导图渲染）
+RELATION_GRAPH_MIN_WEIGHT = 30    # 关系图只展示重要度不低于 30 的人物
 
 # ===== 共享单例 =====
 

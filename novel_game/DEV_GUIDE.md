@@ -8,7 +8,7 @@
 
 - `models.py` 中的 `PlayerAction` 已被删除（全文搜索还会命中本文档第 162 行附近的旧代码片段，那是历史记录）。图状态 `AgentState` 现在是 `TypedDict`，字段为 `session_id` / `novel_id` / `player_action`(str) / `action_category` / `target_npc` / `npc_dialogue` / `result`。
 - 动作接口路径是 `POST /api/game/action`（不是 `/api/action`）；另有 `/api/game/start`、`/api/game/resume`、`GET|DELETE /api/game/sessions/...`、`POST /api/novel/upload`、`GET /api/novel/list`、`GET|DELETE /api/novel/{novel_id}`。
-- `POST /api/novel/upload` 现为**异步导入**：校验通过后立即返回 `{"job_id","status":"running"}`，切片入库与人物提取在后台线程执行，进度用 `GET /api/novel/import/{job_id}` 查询（同一时刻只允许 1 个任务，重复上传返回 409）；人物提取本身也改为「20 万字分段 + 每段块首 8000 字抽样 + 合并去重」，不再只看全书开头。
+- `POST /api/novel/upload` 现为**异步导入**：校验通过后立即返回 `{"job_id","status":"running"}`，切片入库与人物提取在后台线程执行，进度用 `GET /api/novel/import/{job_id}` 查询（同一时刻只允许 1 个任务，重复上传返回 409）；人物提取本身也改为「2 万字分段 + 每段块首 8000 字抽样 + 合并去重」，不再只看全书开头。若人物提取失败，任务仍完成入库，但终态会返回 `degraded=true`，前端会明确提示关系图/NPC 人设暂不可用；关系图接口只展示重要度不低于 30 的人物，并自动移除与隐藏人物相连的边。
 - `agents/rules.py` **从未存在**（Rules 判定已合并进 `agents/router.py`）。
 - 验收测试以 `test_contract.py`（契约）与 `test_tech_debt.py`（全链路回归）为准，`test_lock*.py` / `_tmp_*.py` / `diag*.py` 是开发期诊断脚本。
 - 前端 UI 与「纸感」主题集中在 `static/style.css` + `static/app.js`，关系图是独立的 `graphic/relation.html`（自带样式，不引用 `style.css`）。
