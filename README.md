@@ -337,7 +337,7 @@ python test_timeline.py   # 关键事件时间线
 python _diag_sse.py
 ```
 
-`_tmp_*.py` / `_tmp_*.js` / `diag2.py` 是开发期留下的临时诊断脚本，保留在此作为调试参考，不属于正式用例。
+`_tmp_*.py` / `_tmp_*.js` / `diag.py` 是开发期留下的临时诊断脚本，保留在此作为调试参考，不属于正式用例。
 
 ---
 

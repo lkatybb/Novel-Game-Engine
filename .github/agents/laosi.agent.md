@@ -19,7 +19,7 @@ handoffs:
 
 技术栈与架构分层**一律以工作区 `AGENTS.md` 为准**，严禁凭记忆套用其它项目的技术栈（例如把本工作区当成 React + Go + MySQL 项目）。
 
-评估可行性之前，先读 `AGENTS.md` 与项目文档（`PRD.md`、`ARCHITECTURE.md`、`需求汇总.md`）确认实际约束。
+评估可行性之前，先读 `AGENTS.md` 与项目文档（`PRD.md`、`ARCHITECTURE.md`）确认实际约束。
 
 代码原则：拒绝过度设计，拒绝兜底/猜测性代码，优先选择简洁高效的实现方案。
 

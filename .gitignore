@@ -36,3 +36,16 @@ build/
 
 # ---------- 派生 / 运行时数据 ----------
 novel_game/chroma_db/
+
+# ---------- 个人文档 / 私人素材（仅本地保留，绝不入库）----------
+/面试复盘.md
+/学习记录.md
+/调试记录.md
+/我的新需求.md
+/需求汇总.md
+/*.docx
+/AUTOPILOT-*.md
+/执行报告-*.md
+/N5-叙事时间旅行-实施方案.md
+novel_game/diag2.py
+/image.png
