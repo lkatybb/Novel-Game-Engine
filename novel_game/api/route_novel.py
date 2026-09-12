@@ -6,8 +6,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from api.import_jobs import create_job, snapshot, start
-from pipeline.novel_parser import delete_collection
-from pipeline.character_extractor import drop_cache
+from pipeline.novel_parser import delete_collection, clean_opening_text
+from pipeline.character_extractor import drop_cache, get_intro
 from config import NOVELS_DIR
 from memory.global_state import drop_state
 from memory.session_store import (
@@ -79,6 +79,25 @@ async def get_import_job(job_id: str):
 async def get_bookshelf():
     """获取书架列表"""
     return {"novels": list_novels()}
+
+
+@router.get("/{novel_id}/intro")
+async def get_novel_intro(novel_id: str):
+    """获取新故事开始前展示的背景简介。
+
+    优先用导入时 LLM 生成的简介（缓存在 character_cache 里）；改造前导入的老书、或
+    生成失败的书没有简介，回退到清洗掉书头与目录后的原著开头。
+    """
+    entry = get_novel_meta(novel_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"小说不存在: {novel_id}")
+    path = NOVELS_DIR / entry["filename"]
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError as exc:
+        logger.exception("读取小说简介失败: novel_id=%s", novel_id)
+        raise HTTPException(status_code=500, detail="读取小说简介失败") from exc
+    return {"intro": get_intro(novel_id) or clean_opening_text(text)}
 
 
 @router.delete("/{novel_id}")
