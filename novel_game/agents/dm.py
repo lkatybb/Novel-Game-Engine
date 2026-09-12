@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from config import LLM_MODEL, LLM_MAX_TOKENS, get_llm_client
-from pipeline.prompts import DM_SYSTEM, player_identity
+from pipeline.prompts import DM_SYSTEM, player_identity, perspective_line
 from pipeline.character_extractor import get_key_events
 from memory.short_term import format_memory
 from memory.global_state import format_state, get_next_event
@@ -21,8 +21,9 @@ def build_opening_prompt(novel_id: str, long_mem: str) -> str:
     否则它不知道"原著此刻之前发生过什么"，就不敢声明任何事件，时间线永远冻在第一件。
     trigger_condition 一律不给——那是"何时该发生"，开场也不需要。
 
-    [玩家身份] 必须给：原著开头是第三人称叙述（"猴王倒身下拜"），不给身份 DM 会把
-    主角写成旁边看戏的旁人。
+    [玩家身份] 与紧随其后的 [人称约束] 必须给，且与动作轮同位置：原著开头是第三人称
+    叙述（"猴王倒身下拜"），不给身份 DM 会把主角写成旁边看戏的旁人；人称随原著走，
+    第一人称原著的开场也必须用「我」自述。
     """
     events = sorted(get_key_events(novel_id), key=lambda e: e.get("order", 999))
     checklist = "\n".join(f"  {e.get('order', 999)}. {e['event_name']}" for e in events)
@@ -33,6 +34,8 @@ def build_opening_prompt(novel_id: str, long_mem: str) -> str:
 
 {player_identity(novel_id)}
 
+{perspective_line(novel_id)}
+
 [原著开头]
 {long_mem}
 
@@ -41,8 +44,6 @@ def build_opening_prompt(novel_id: str, long_mem: str) -> str:
 
 state_changes.triggered_events 里只列**开场时点之前**原著中已经发生的事件名，
 未发生的一律不写、不要提前触发；正文也不得叙述清单里尚未发生的事。
-
-正文必须以玩家（主角本人）的视角展开，原著里的主角就是玩家，不要写成旁人在看主角行动。
 
 请输出JSON。"""
 
@@ -70,7 +71,10 @@ def _build_prompt(session_id: str, novel_id: str, player_action: str) -> str:
                            f"  {nxt['order']}. {nxt['event_name']}\n"
                            f"你有责任在合适时机自然推进它发生，不能让玩家跳过或改变结果。")
 
+    # 人称约束每轮都注入：只在开场给一次时，第 2 回合起 LLM 就会漂成第二人称或第三人称旁白
     return f"""{player_identity(novel_id)}
+
+{perspective_line(novel_id)}
 
 [短期记忆]
 {short_mem}
