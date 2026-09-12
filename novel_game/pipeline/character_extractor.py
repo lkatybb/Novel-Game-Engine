@@ -164,6 +164,34 @@ def _extract_ending(text_sample: str) -> str:
     return str(ending).strip()
 
 
+def _extract_intro(text_sample: str) -> str:
+    """生成新故事开场前展示的背景简介（一段客观叙述）。
+
+    只看全书开头样本。非关键路径——失败返回空串，展示层回退到清洗后的原著开头，
+    绝不用生成式文案兜底。
+    """
+    intro_prompt = """你是小说分析专家。根据以下小说**开头部分**的文本，客观概述这本书的故事背景。
+
+要求：
+- 交代故事发生的时间、地点、社会环境，以及主要人物之间的基本关系
+- 200-300 字，纯叙述，不评价、不抒情、不发挥
+- 不剧透结局，不写文本中没有交代的内容
+- 直接从背景本身写起，不要用「本书」「本作」这类评论口吻开篇
+
+输出JSON格式：
+{
+  "intro": "背景简介"
+}"""
+
+    logger.info("开始生成背景简介...")
+    try:
+        intro = json.loads(_llm_call(intro_prompt, text_sample)).get("intro", "")
+    except Exception as e:
+        logger.warning("背景简介生成失败，将回退到原著开头: %s", e)
+        return ""
+    return str(intro).strip()
+
+
 _EVENT_QUOTA_MAX = 15   # 单段事件条数上限（= 旧口径的"5-15 个"，单段书与旧行为一致）
 _EVENT_QUOTA_MIN = 3    # 单段事件条数下限（段数再多也要给每段留出记录骨架的机会）
 _PROFILE_LIMIT = 10     # 每段最多生成人设的角色数（= 旧口径的"最多取前10个"）
@@ -184,6 +212,11 @@ def _sample_of(block: str) -> str:
     否则单段书的结果会跟着变。
     """
     return block[:EXTRACT_SAMPLE_CHARS]
+
+
+def _opening_sample_of(text: str) -> str:
+    """全书开头样本，与提取时第 1 段的样本口径一致（第 1 段就是 text 的前 20000 字）"""
+    return text[:EXTRACT_SAMPLE_CHARS]
 
 
 def _event_quota(segment_count: int) -> int:
@@ -323,20 +356,96 @@ def _extract_events(sample: str, quota: int) -> list[dict]:
     return events
 
 
-def _merge_graph(graphs: list[dict]) -> dict:
+def _collect_node_names(graphs: list[dict]) -> list[str]:
+    """按首次出现顺序收集各段节点名（去重），作为别名归并的候选名单"""
+    names: list[str] = []
+    seen: set[str] = set()
+    for graph in graphs:
+        for n in graph.get("nodes", []):
+            node_id = str(n.get("id", "")).strip()
+            if node_id and node_id not in seen:
+                seen.add(node_id)
+                names.append(node_id)
+    return names
+
+
+_ALIAS_SYSTEM = """你是小说人物对齐专家。用户会给你一份人物名清单——这是同一本小说分段提取后各段称呼的合集，同一个人可能因为不同段的称呼不同（本名／小名／昵称／简称／第一人称自称）而在清单里出现多次。
+
+请找出其中指代**同一个人**的名字，输出「别名 → 正名」映射。
+
+要求：
+- 正名与别名都必须逐字来自清单，一个字都不能改，不许出现清单以外的名字
+- 正名选信息最完整的那个（“钱钟书”而不是“钟书”，“杨绛”而不是“我”）
+- 拿不准是否指同一个人的，一律不要写进来；没有别名就给空对象
+
+输出JSON格式：
+{"aliases": {"别名": "正名"}}"""
+
+
+def _canonical_name(name: str, pairs: dict[str, str]) -> str:
+    """沿别名链走到不动点（A→B、B→C 归结到 C）；成环则返回原名，等效于丢弃这条映射"""
+    seen = {name}
+    current = name
+    while current in pairs:
+        nxt = pairs[current]
+        if nxt in seen:
+            return name
+        seen.add(nxt)
+        current = nxt
+    return current
+
+
+def _resolve_aliases(names: list[str]) -> dict[str, str]:
+    """把各段对同一个人的不同称呼归并到同一个正名，返回「别名 → 正名」。
+
+    分段提取时每段独立调一次 LLM，各段对同一角色的称呼口径不统一（本名／小名／
+    第一人称自称）；合并时只按字面去重，就会在图上把一个人画成好几个节点。这里用
+    一次调用求出映射，并硬校验防幻觉：
+    - 别名与正名都必须逐字在原始名单内，且不相等 —— 模型凭空造出来的名字一律丢弃
+    - 链式映射收敛到不动点；成环的条目整条丢弃（谁是正名无从判断，不猜）
+
+    非关键路径：名单不足 2 个、或调用/解析失败，返回空字典 = 不归并，图照常出。
+    """
+    if len(names) < 2:
+        return {}
+    try:
+        aliases = json.loads(_llm_call(_ALIAS_SYSTEM,
+                                       f"人物名清单：{'、'.join(names)}")).get("aliases", {})
+    except Exception as e:
+        logger.warning("人物别名归并失败，本作不做归并: %s", e)
+        return {}
+
+    known = set(names)
+    raw_pairs = {str(a).strip(): str(c).strip()
+                 for a, c in (aliases.items() if isinstance(aliases, dict) else [])}
+    pairs = {a: c for a, c in raw_pairs.items() if a in known and c in known and a != c}
+    resolved = {a: _canonical_name(a, pairs) for a in pairs}
+    resolved = {a: c for a, c in resolved.items() if a != c}
+    if resolved:
+        logger.info("人物别名归并：%s", "、".join(f"{a}→{c}" for a, c in resolved.items()))
+    return resolved
+
+
+def _merge_graph(graphs: list[dict], alias_map: dict[str, str] | None = None) -> dict:
     """合并各段关系图：节点按 id 去重（weight 取最大、group 以首段为准），
     边按 (source, target) 去重（先出现者胜：同一对人物只留一条关系），
     最后按 weight 降序截断到 EXTRACT_MAX_NODES。
 
+    alias_map 是「别名 → 正名」映射（_resolve_aliases 的产物），在字面去重之前先套用，
+    否则「钟书」与「钱钟书」会被当成两个人各画一个节点；套用后原本不同的两条边可能
+    变成同一条，交给下面的 (source, target) 去重接着兜住。
+
     被截断的节点，它的边一并丢弃——D3 的 forceLink 在图上找不到端点会整张图渲染失败。
     """
+    alias_map = alias_map or {}
     nodes: dict[str, dict] = {}
     links: list[dict] = []
     seen_links: set[tuple[str, str]] = set()
 
     for graph in graphs:
         for n in graph.get("nodes", []):
-            node_id = str(n.get("id", "")).strip()
+            raw_id = str(n.get("id", "")).strip()
+            node_id = alias_map.get(raw_id, raw_id)
             if not node_id:
                 continue
             if node_id in nodes:
@@ -345,8 +454,10 @@ def _merge_graph(graphs: list[dict]) -> dict:
                 nodes[node_id] = {"id": node_id, "weight": _weight_of(n),
                                   "group": n.get("group") or ""}
         for link in graph.get("links", []):
-            source = str(link.get("source", "")).strip()
-            target = str(link.get("target", "")).strip()
+            raw_source = str(link.get("source", "")).strip()
+            raw_target = str(link.get("target", "")).strip()
+            source = alias_map.get(raw_source, raw_source)
+            target = alias_map.get(raw_target, raw_target)
             if not source or not target or (source, target) in seen_links:
                 continue
             seen_links.add((source, target))
@@ -359,16 +470,18 @@ def _merge_graph(graphs: list[dict]) -> dict:
             "links": [l for l in links if l["source"] in alive and l["target"] in alive]}
 
 
-def _merge_profiles(chunks: list[dict]) -> dict:
+def _merge_profiles(chunks: list[dict], alias_map: dict[str, str] | None = None) -> dict:
     """合并各段人设档案：同一角色多段都写了 → 最早出现的段胜出。
 
     人设是"人物初次登场时的设定"，后段再写一遍多半是顺着剧情重述，越靠后越可能
-    掺进剧透（secret 字段尤其危险）。
+    掺进剧透（secret 字段尤其危险）。key 与关系图同口径走「别名 → 正名」，
+    否则图上已经是「钱钟书」、档案里还挂着「钟书」，角色百科就取不到人设。
     """
+    alias_map = alias_map or {}
     merged: dict = {}
     for profiles in chunks:
         for name, profile in profiles.items():
-            merged.setdefault(name, profile)
+            merged.setdefault(alias_map.get(name, name), profile)
     return merged
 
 
@@ -404,7 +517,8 @@ def extract_characters(novel_id: str, novel_text: str,
             "npc_profiles": {"角色名": {personality, secret, speech_style, ...}, ...},
             "key_events": [{"event_name", "trigger_condition", "order", "key_characters"}, ...],
             "player_stats": [{"name", "desc", "init"}, ...],
-            "ending": "原著结局摘要（空串 = 该作不启用结局）"
+            "ending": "原著结局摘要（空串 = 该作不启用结局）",
+            "intro": "故事背景简介（空串 = 生成失败，展示时回退原著开头）"
         }
     """
     # 检查缓存（内存 → 磁盘）
@@ -445,8 +559,13 @@ def extract_characters(novel_id: str, novel_text: str,
         if on_progress:
             on_progress(index + 1, len(segments))
 
-    graph_data = _merge_graph(graphs)
-    npc_profiles = _merge_profiles(profile_chunks)
+    # 各段对同一角色的称呼可能不一致（本名／小名／自称），先归到正名再合并，
+    # 否则图上会把一个人画成好几个节点；主角名也走一遍，避免"主角=我、节点=杨绛"
+    alias_map = _resolve_aliases(_collect_node_names(graphs))
+    protagonist = alias_map.get(protagonist, protagonist)
+
+    graph_data = _merge_graph(graphs, alias_map)
+    npc_profiles = _merge_profiles(profile_chunks, alias_map)
     key_events = _merge_segment_events(event_chunks)
 
     # ---- 第四步：提取本书主角的属性维度（属性由书决定，非固定四维；只用开头那段样本） ----
@@ -456,6 +575,9 @@ def extract_characters(novel_id: str, novel_text: str,
     # ---- 第五步：提取原著结局摘要（只看全书末尾；非关键路径，失败即整体关闭） ----
     ending = _extract_ending(_ending_sample_of(novel_text))
 
+    # ---- 第六步：生成故事背景简介（只看全书开头；非关键路径，失败由展示层回退） ----
+    intro = _extract_intro(_opening_sample_of(novel_text))
+
     # 缓存（内存 + 磁盘）
     result = {
         "graph": graph_data,
@@ -463,16 +585,18 @@ def extract_characters(novel_id: str, novel_text: str,
         "key_events": key_events,
         "player_stats": player_stats,
         "ending": ending,
+        "intro": intro,
     }
     _cache[novel_id] = result
     _save_to_disk(novel_id, result)
 
-    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性, 结局摘要 %d 字",
+    logger.info("人物提取完成: %d 个人物, %d 条关系, %d 个关键事件, %d 项主角属性, 结局摘要 %d 字, 背景简介 %d 字",
                 len(graph_data["nodes"]),
                 len(graph_data["links"]),
                 len(key_events),
                 len(player_stats),
-                len(ending))
+                len(ending),
+                len(intro))
 
     return result
 
@@ -549,6 +673,13 @@ def get_ending(novel_id: str) -> str:
     if not _ensure_loaded(novel_id):
         return ""
     return str(_cache[novel_id].get("ending", "") or "")
+
+
+def get_intro(novel_id: str) -> str:
+    """故事背景简介；改造前导入的老书或生成失败时为空串（展示层回退到原著开头）。"""
+    if not _ensure_loaded(novel_id):
+        return ""
+    return str(_cache[novel_id].get("intro", "") or "")
 
 
 def get_key_events(novel_id: str) -> list[dict]:
