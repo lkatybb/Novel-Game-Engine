@@ -6,8 +6,13 @@
     <title>人物关系图</title>
     <style>
         :root {
-            --bg-0: #f4f1ea;
-            --bg-1: #ece7dc;
+            /* 与主站 static/style.css 同步：暖白纸底 + 光晕最亮点偏左上（不在中央） */
+            --bg-0: #faf5e8;
+            --bg-1: #f2ecdd;
+            --paper-glow: radial-gradient(
+                62% 66% at 17% 28%,
+                #fffefb 0%, #fefbf2 28%, #f9f3e5 58%, #f0e9d8 82%, #eae3d4 100%);
+            /* 整屏光晕：亮斑偏左上（与主站一致），四周渐深，像一束光打在纸上 */
             --ink-0: #2b2823;
             --ink-1: #6f6a5e;
             --ink-2: #a09a8c;
@@ -24,22 +29,20 @@
             font-family: var(--font-song);
             overflow: hidden;
         }
-        /* 纸感背景层 */
+        /* 纸感背景层：暖白光晕（最亮点偏左上）+ 纸纹 + 暗角，与主站同一套 */
         .backdrop {
             position: fixed; inset: 0; z-index: -3;
-            background:
-                radial-gradient(1200px 800px at 20% 0%, rgba(255,255,255,0.5), transparent 60%),
-                var(--bg-0);
+            background: var(--paper-glow);
         }
         .grain {
             position: fixed; inset: 0; z-index: -2; pointer-events: none;
-            opacity: 0.35; mix-blend-mode: multiply;
-            background-image: repeating-linear-gradient(
-                0deg, transparent 0 2px, rgba(43,40,35,0.015) 2px 3px);
+            background-image: url("/assets/paper.png");
+            background-size: 512px 512px;
+            background-repeat: repeat;
         }
         .vignette {
             position: fixed; inset: 0; z-index: -1; pointer-events: none;
-            box-shadow: inset 0 0 180px rgba(43, 40, 35, 0.10);
+            box-shadow: inset 0 0 200px rgba(122, 104, 72, 0.06);
         }
 
         /* 顶栏 */
@@ -131,7 +134,7 @@
         .legend {
             position: fixed;
             right: 28px; bottom: 24px;
-            background: rgba(244, 241, 234, 0.92);
+            background: rgba(250, 245, 232, 0.92);
             backdrop-filter: blur(6px);
             border: 1px solid var(--line);
             border-radius: 12px;
@@ -152,6 +155,20 @@
             width: 14px; height: 8px; border-radius: 2px;
             flex-shrink: 0;
         }
+
+        /* 署名：左下角，与主站书架首页口径保持一致 */
+        .signature {
+            position: fixed;
+            left: 28px; bottom: 26px;
+            font-family: var(--font-sans); font-size: 12px;
+            letter-spacing: 0.14em; color: var(--ink-2);
+            z-index: 10;
+        }
+        .signature a {
+            color: inherit; text-decoration: none;
+            border-bottom: 1px solid var(--line);
+        }
+        .signature a:hover { color: var(--ink-1); }
 
         /* Tooltip：浅底卡片，与主站一致 */
         .tooltip {
@@ -187,7 +204,7 @@
         .codex {
             position: fixed; top: 62px; right: 0; bottom: 0;
             width: 340px; max-width: 86vw;
-            background: rgba(236, 231, 220, 0.96);
+            background: rgba(243, 237, 224, 0.96);
             backdrop-filter: blur(8px);
             border-left: 1px solid var(--line);
             box-shadow: -12px 0 40px rgba(43, 40, 35, 0.08);
@@ -269,6 +286,8 @@
 
     <svg id="graph"></svg>
     <div class="legend" id="legend"></div>
+    <!-- 署名：改这里时要与 static/index.html 的 .brand-author 一起改 -->
+    <div class="signature">作者：<a href="https://github.com/lkatybb" target="_blank" rel="noopener">@lkatybb</a></div>
     <aside class="codex" id="codex"></aside>
     <div class="tooltip" id="tooltip"></div>
     <div class="empty-hint" id="emptyHint">正在加载人物关系图…</div>
@@ -393,7 +412,7 @@
             legend.append('div').attr('class', 'legend-row')
                 .html(`<span class="legend-dot" style="background:#2b2823"></span>主角`);
             legend.append('div').attr('class', 'legend-row')
-                .html(`<span class="legend-dot" style="background:#ece7dc;border:1px solid #2b2823"></span>配角`);
+                .html(`<span class="legend-dot" style="background:#f2ecdd;border:1px solid #2b2823"></span>配角`);
             legend.append('div').attr('class', 'legend-row')
                 .html(`<span class="legend-dot" style="background:#fff;border:1px solid #2b2823"></span>配角团`);
         }
