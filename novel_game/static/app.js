@@ -19,7 +19,9 @@ const dom = {
   body: document.body,
   // 书架
   fileInput: $('fileInput'), importBtn: $('importBtn'),
-  libraryView: $('libraryView'), novelMenuList: $('novelMenuList'),
+  exampleLibraryBtn: $('exampleLibraryBtn'), exampleLibraryPanel: $('exampleLibraryPanel'),
+  backToReaderCache: $('backToReaderCache'),
+  libraryView: $('libraryView'), novelMenuList: $('novelMenuList'), exampleMenuList: $('exampleMenuList'),
   detailView: $('detailView'), backToLibrary: $('backToLibrary'),
   detailTitle: $('detailTitle'), detailMeta: $('detailMeta'),
   sessionMenuList: $('sessionMenuList'),
@@ -48,6 +50,10 @@ const dom = {
   tapHint: $('tapHint'),
   sceneOverlay: $('sceneOverlay'), sceneName: $('sceneName'), sceneDesc: $('sceneDesc'),
   endingOverlay: $('endingOverlay'), endingText: $('endingText'), endingHome: $('endingHome'),
+  introOverlay: $('introOverlay'), introTitle: $('introTitle'), introText: $('introText'),
+  introStart: $('introStart'),
+  // 生成中缓冲页
+  loadingOverlay: $('loadingOverlay'), loadingTitle: $('loadingTitle'), loadingHint: $('loadingHint'),
 };
 
 /** 应用全局状态（单一数据源） */
@@ -157,6 +163,7 @@ function latestSession(novels) {
 /** 拉取并渲染书架：最近更新的书在最上，顶部一条「继续上次游戏」直达最近存档 */
 async function loadLibrary() {
   dom.novelMenuList.innerHTML = '';
+  dom.exampleMenuList.innerHTML = '';
   const empty = document.createElement('div');
   empty.className = 'empty-hint';
   empty.textContent = '加载中…';
@@ -167,12 +174,19 @@ async function loadLibrary() {
     const novels = [...(data.novels || [])]
       .sort((a, b) => novelUpdatedAt(b).localeCompare(novelUpdatedAt(a)));
     dom.novelMenuList.innerHTML = '';
-    if (!novels.length) {
-      empty.textContent = '还没有小说。点击上方「上传新小说」开始。';
+    const examples = novels.filter((nv) => nv.title === '悬疑');
+    const readers = novels.filter((nv) => nv.title !== '悬疑');
+    if (!examples.length) {
+      dom.exampleMenuList.innerHTML = '<div class="empty-hint">暂无示例作品</div>';
+    } else {
+      examples.forEach((nv) => appendNovelItem(dom.exampleMenuList, nv));
+    }
+    if (!readers.length) {
+      empty.textContent = '还没有小说。点击上方「上传素材」开始。';
       dom.novelMenuList.appendChild(empty);
       return;
     }
-    const last = latestSession(novels);
+    const last = latestSession(readers);
     if (last) {
       const item = buildMenuItem('继续上次游戏', last.nv.title || last.nv.novel_id);
       item.classList.add('menu-item-strong');
@@ -181,15 +195,17 @@ async function loadLibrary() {
         last.session.session_id, last.nv.novel_id, last.nv.title || last.nv.novel_id));
       dom.novelMenuList.appendChild(item);
     }
-    for (const nv of novels) {
-      const count = (nv.sessions || []).length;
-      const item = buildMenuItem(nv.title || nv.novel_id, count ? `${count} 个存档` : '尚未开始');
-      item.addEventListener('click', () => showNovelDetail(nv));
-      dom.novelMenuList.appendChild(item);
-    }
+    readers.forEach((nv) => appendNovelItem(dom.novelMenuList, nv));
   } catch (e) {
     empty.textContent = `书架加载失败：${e.message}`;
     dom.novelMenuList.appendChild(empty);
+  }
+
+  function appendNovelItem(container, nv) {
+    const count = (nv.sessions || []).length;
+    const item = buildMenuItem(nv.title || nv.novel_id, count ? `${count} 个存档` : '尚未开始');
+    item.addEventListener('click', () => showNovelDetail(nv));
+    container.appendChild(item);
   }
 }
 
@@ -218,6 +234,12 @@ function buildMenuItem(label, sub) {
 function showLibrary() {
   dom.detailView.hidden = true;
   dom.libraryView.hidden = false;
+  dom.exampleLibraryPanel.hidden = true;
+  // 补全：恢复书架视图内部元素，防止从示例库或详情页返回时空白
+  dom.libraryView.querySelector('.brand').hidden = false;
+  dom.libraryView.querySelector('.launcher-nav').hidden = false;
+  dom.libraryView.querySelector('.reader-cache-heading').hidden = false;
+  dom.novelMenuList.hidden = false;
 }
 
 /** 进入某本小说的存档页：开始新游戏 + 全部存档记录 */
@@ -234,7 +256,7 @@ function showNovelDetail(nv) {
   // 第一项：开始新游戏
   const newGame = buildMenuItem('开始新故事');
   newGame.classList.add('menu-item-strong');
-  newGame.addEventListener('click', () => startGame(nv.novel_id, nv.title || nv.novel_id));
+  newGame.addEventListener('click', () => showIntro(nv.novel_id, nv.title || nv.novel_id));
   dom.sessionMenuList.appendChild(newGame);
 
   // 全部存档记录（最近在上）
@@ -341,7 +363,7 @@ async function watchImportJob(jobId) {
         toast('导入完成，正在进入故事…', true);
       }
       await loadLibrary();
-      await startGame(job.novel_id, job.title);
+      await showIntro(job.novel_id, job.title);
       if (job.degraded) {
         toast('导入完成，但人物信息提取失败，关系图和 NPC 人设暂不可用', true);
       }
@@ -417,11 +439,25 @@ function clearStage() {
   dom.sceneOverlay.hidden = true;
 }
 
+/** 显示生成中缓冲页（开场 / 恢复要等一次 LLM 调用，冷启动可达 40s+） */
+function showLoading(title, hint) {
+  dom.loadingTitle.textContent = title;
+  dom.loadingHint.textContent = hint || '';
+  dom.loadingOverlay.hidden = false;
+  // 强制重排后再加 show：后台标签页里 rAF 不回调，会卡在透明遮罩上
+  void dom.loadingOverlay.offsetHeight;
+  dom.loadingOverlay.classList.add('show');
+}
+
+function hideLoading() {
+  dom.loadingOverlay.classList.remove('show');
+  dom.loadingOverlay.hidden = true;
+}
+
 /** 开始新游戏 */
 async function startGame(novelId, title) {
+  showLoading('正在生成新故事', '正在搭建立场、人物与开场，首次生成约需 30~60 秒，请不要关闭页面');
   try {
-    // /start 内含 LLM 调用（冷启动可达 40s+），sticky 让提示一直挂到出结果
-    toast('正在生成开场…', true);
     const data = await api('/api/game/start', {
       method: 'POST',
       body: { novel_id: novelId },
@@ -430,23 +466,51 @@ async function startGame(novelId, title) {
     app.sessionId = data.session_id;
     resetChat();                          // 换会话：私聊面板与角色列表重来
     resetStatFocus();                     // 换会话：好感度焦点与快照重来
-    enterGame(title);
+    enterGame(title);                     // 先切到游戏界面，再撤缓冲页，避免闪回存档页
     applyState(data.state);
     beginTurn({ scene: data.scene || null });
     app.pendingChoices = Array.isArray(data.choices) ? data.choices : null;
+    hideLoading();
     appendSegment('scene', '', data.story || data.opening || '故事开始了。');
     app.pager.done = true;                // 非流式：内容已齐，播放器自行播完出选项
     hideToast();
   } catch (e) {
+    hideLoading();
     toast(`开始失败：${e.message}`);
   }
+
+}
+
+const SUSPENSE_INTRO = '我剥离了自己一半的记忆神经元，给了患有遗传性失忆症的丈夫陆知宴。\n\n我只有一个请求：“请一定照顾好我们患有哮喘的儿子。”\n\n他醒来后，却拥着我的闺蜜许柔，说她是救了自己的人。\n\n他为许柔花了很多钱，建起了一家大公司。\n\n却把我们五岁的儿子扔进尘肺病人聚集区的寄宿学校，让他一直咳血。\n\n儿子在电话里哭着求我：“妈妈，爸爸说我是你这个骗子的累赘，他不想要我了。”\n\n直到他想吻许柔的那一刻，大脑剧痛，吐出了一句胡话：“温晴，别走。”\n\n医生拿着他的脑电图报告，有些疑惑：“陆先生，您移植的神经元，正在排斥您对许小姐产生的爱意。捐献人，真的是她吗？”\n\n……';
+let pendingIntro = null;
+
+async function showIntro(novelId, title) {
+  try {
+    const intro = title === '悬疑'
+      ? SUSPENSE_INTRO
+      : (await api(`/api/novel/${encodeURIComponent(novelId)}/intro`)).intro;
+    pendingIntro = { novelId, title };
+    dom.introTitle.textContent = title;
+    dom.introText.textContent = intro || '故事即将开始。';
+    dom.introOverlay.hidden = false;
+    requestAnimationFrame(() => dom.introOverlay.classList.add('show'));
+  } catch (e) {
+    toast(`背景简介加载失败：${e.message}`);
+  }
+}
+
+function closeIntro() {
+  dom.introOverlay.classList.remove('show');
+  dom.introOverlay.hidden = true;
+  const next = pendingIntro;
+  pendingIntro = null;
+  if (next) startGame(next.novelId, next.title);
 }
 
 /** 恢复历史会话（契约：POST /api/game/resume {session_id}） */
 async function resumeGame(sessionId, novelId, title) {
+  showLoading('正在恢复存档', '正在读取上次的进度与上下文，请稍候');
   try {
-    // /resume 内含一次 LLM 调用（冷启动可达 40s+），sticky 让提示一直挂到出结果
-    toast('正在恢复上次进度…', true);
     const data = await api('/api/game/resume', {
       method: 'POST',
       body: { session_id: sessionId },
@@ -455,14 +519,16 @@ async function resumeGame(sessionId, novelId, title) {
     app.sessionId = data.session_id;
     resetChat();                          // 换会话：私聊面板与角色列表重来
     resetStatFocus();                     // 换会话：好感度焦点与快照重来
-    enterGame(title || data.novel_id);
+    enterGame(title || data.novel_id);    // 先切到游戏界面，再撤缓冲页
     applyState(data.state);
     beginTurn({ scene: null });            // 恢复存档不弹场景窗
     app.pendingChoices = Array.isArray(data.choices) ? data.choices : null;
+    hideLoading();
     appendSegment('scene', '', (data.last_story || '已回到上次的进度，继续你的故事。'));
     app.pager.done = true;
     toast('已恢复存档');
   } catch (e) {
+    hideLoading();
     toast(`恢复失败：${e.message}`);
   }
 }
@@ -516,7 +582,8 @@ async function sendAction(text) {
     hideTyping();
     updateProgress();
     // SSE 结束：播放器播完末页后自行 finishTurn 出选项；空内容也由 playTick 兜底
-    if (app.pager) app.pager.done = true;
+    // dirty 置位是为了把上面被延后的半句补进分页——本轮结束后它不会再变长
+    if (app.pager) { app.pager.done = true; app.pager.dirty = true; }
   }
 }
 
@@ -533,7 +600,7 @@ function handleSsePart(part) {
       setStageText(evt.text || '');
       break;
     case 'scene':
-      // 增量进入分页段缓冲，由 playTick 按页播放（任何时刻只显示当前页 2-3 行）
+      // 增量进入分页段缓冲，由 playTick 按页播放（任何时刻只显示当前页 4-5 行）
       appendSegment('scene', '', evt.text || '');
       break;
     case 'npc':
@@ -571,7 +638,7 @@ function setInteractionEnabled(enabled) {
 
 /* --------------------------------------------------------------------------
  * 4. 实时分页播放器
- *    SSE 的 scene/npc 增量按「段」缓冲，边到达边重新分页（每页 2-3 行）；
+ *    SSE 的 scene/npc 增量按「段」缓冲，边到达边重新分页（每页 4-5 行）；
  *    正文不再逐字打字：整页像选项卡一样从底部渐进弹出（带触底回弹），
  *    轻触后当前页反向沉回淡出，下一页弹出；末页定稿后才出现选项。
  *    场景弹窗打开期间 gated：任何文字都不显示，关闭后从首页弹出。
@@ -718,13 +785,13 @@ function hardSplit(text, measure, maxH) {
   return out;
 }
 
-/** 孤行页消解：正文不足 2 行的页并进上一页（合并后最多 4 行正文），
+/** 孤行页消解：正文不足半页的页并进上一页（并入后仍在一页之内），
  *  避免「上一页让出回显后，末尾一句被挤成只有 1 行的页」，减少无谓的翻页次数 */
-function mergeOrphanPages(texts, measure, lineH) {
+function mergeOrphanPages(texts, measure, maxH) {
   const out = [];
   texts.forEach((t) => {
     const prev = out[out.length - 1];
-    if (prev !== undefined && measure(t) <= lineH * 1.5 && measure(prev + t) <= lineH * 4) {
+    if (prev !== undefined && measure(t) <= maxH * 0.5 && measure(prev + t) <= maxH) {
       out[out.length - 1] = prev + t;
     } else {
       out.push(t);
@@ -733,28 +800,10 @@ function mergeOrphanPages(texts, measure, lineH) {
   return out;
 }
 
-/** 在切点前找最近的停顿标点（标点留在前页）；太靠前或没有标点则按字符切 */
-function snapToPause(unit, len) {
-  const pause = unit.slice(0, len).search(/[，。！？；、,;.!?](?=[^，。！？；、,;.!?]*$)/);
-  return pause >= len / 2 ? pause + 1 : len;
-}
-
-/** 从 unit 头部取一段补进 cur（连同 cur 不超过 limit 高度），返回可取的字符数；一个字都塞不下返回 0 */
-function takePrefix(unit, cur, measure, limit) {
-  if (!unit || measure(cur + unit.slice(0, 1)) > limit) return 0;
-  let lo = 1;
-  let hi = unit.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (measure(cur + unit.slice(0, mid)) <= limit) lo = mid;
-    else hi = mid - 1;
-  }
-  return snapToPause(unit, lo);
-}
-
-/** 单段独立分页：贪心打包完整句，每页 3 行正文；
- *  extraH（回显块高度）只让该段**首页**让位，且首页保底 2 行，不挤压成单行页 */
-function paginateSeg(seg, extraH = 0) {
+/** 单段独立分页：贪心打包完整句，每页 3 行正文；句子绝不跨页；
+ *  extraH（回显块高度）只让该段**首页**让位，且首页保底 2 行；
+ *  deferTail：本段还在流式生成中，段尾未收尾的半句先不参与分页 */
+function paginateSeg(seg, extraH = 0, deferTail = false) {
   const body = getProbe(seg.kind, seg.speaker);
   const shell = body.parentNode;                    // .block：含 speaker 标签的整块
   body.textContent = '国';
@@ -766,8 +815,15 @@ function paginateSeg(seg, extraH = 0) {
     : maxH;
   const measure = (s) => { body.textContent = s; return shell.offsetHeight - chromeH; };
 
+  // 段尾未收尾的半句会随生成继续变长，一旦长到装不下，就把当前页已显示的整句推走，
+  // 造成「先超出行数上限、再闪一下少几行」；先摘掉它，等它收尾再参与分页。
+  // 整段只有一句时不摘——单句独占一页只会变长，不会挤走别的内容，摘了开头会长时间空白
+  const sentences = splitSentences(seg.text);
+  const isComplete = (s) => /[。！？!?…][」”’』）)]*$/.test(s);
+  if (deferTail && sentences.length > 1 && !isComplete(sentences[sentences.length - 1])) sentences.pop();
+
   const units = [];
-  splitSentences(seg.text).forEach((s) => {
+  sentences.forEach((s) => {
     if (measure(s) <= maxH) {
       units.push(s);
       return;
@@ -781,23 +837,20 @@ function paginateSeg(seg, extraH = 0) {
 
   const texts = [];
   let cur = '';
+  // 页首换行最终会被 trim 掉，测量时先剥掉，否则页首那句会被多算一行高度
+  const strip = (s) => s.replace(/^\n+/, '');
   units.forEach((u) => {
-    const limit = texts.length === 0 ? firstMaxH : maxH;   // 首页限额更小
-    const cand = cur + u;
-    if (!cur || measure(cand) <= limit) { cur = cand; return; }
-    // 本页已满却只有一行：下一句整句装不下，就从下一句头部借字补满本页，
-    // 避免玩家翻到只有 1 行的页（剩余部分顺延到下一页）
-    if (measure(cur) <= lineH * 1.5) {
-      const take = takePrefix(u, cur, measure, limit);
-      texts.push((cur + u.slice(0, take)).trim());
-      cur = u.slice(take);
-      return;
-    }
-    texts.push(cur.trim());
+    const capH = texts.length === 0 ? firstMaxH : maxH;   // 首页限额更小
+    if (!cur) { cur = u; return; }
+    // 不再为「避免只有一两句话的页」放宽页尾容量：放宽会让当前页先吸进下一整句而涨出上限，
+    // 等那句变长装不下时再把它推走——那正是「闪一下少几行」的来源。
+    // 宁可页尾留白（孤行页交给 mergeOrphanPages 兜底），也绝不从句中借字
+    if (measure(strip(cur + u)) <= capH) { cur += u; return; }
+    texts.push(strip(cur).trim());
     cur = u;
   });
-  if (cur.trim()) texts.push(cur.trim());
-  return mergeOrphanPages(texts, measure, lineH).map((text) => ({ kind: seg.kind, speaker: seg.speaker, text }));
+  if (cur.trim()) texts.push(strip(cur).trim());
+  return mergeOrphanPages(texts, measure, maxH).map((text) => ({ kind: seg.kind, speaker: seg.speaker, text }));
 }
 
 /** 依据当前 segs 重新扁平化分页；已读页（idx 之前）冻结，防止尾部重排扰动已读内容 */
@@ -808,7 +861,9 @@ function rebuildPages() {
   const echoEl = dom.stream.querySelector('.block-echo');
   const echoH = echoEl ? echoEl.getBoundingClientRect().height + 18 : 0;  // 含回显上边距
   const flat = [];
-  p.segs.forEach((seg, si) => flat.push(...paginateSeg(seg, si === 0 ? echoH : 0)));
+  // 只有「最后一段 + 本轮流式还没结束」才延后半句；其余段的内容已经定型
+  p.segs.forEach((seg, si) => flat.push(...paginateSeg(seg, si === 0 ? echoH : 0,
+    !p.done && si === p.segs.length - 1)));
   for (let i = 0; i < p.idx && i < p.pages.length && i < flat.length; i++) {
     flat[i] = p.pages[i];
   }
@@ -1025,15 +1080,21 @@ function appendEchoStatic(action) {
  * 4.6 切句 & 场景切换弹窗（分页主体见 4. 实时分页播放器）
  * -------------------------------------------------------------------------- */
 
-/** 按句末标点切分完整句子（保留标点与收尾引号），换行视同断句 */
+/** 按句末标点切分完整句子（保留标点与收尾引号）；
+ *  换行是段落边界而非断句符：段首句带一个 "\n" 前缀，拼进页里即保持分段 */
 function splitSentences(text) {
   const out = [];
-  const re = /([^。！？!?…\n]*[。！？!?…]+[」”’』）)]*)|([^。！？!?…\n]+)/g;
-  let m;
-  while ((m = re.exec(text))) {
-    const seg = m[0].replace(/\n+/g, '').trim();
-    if (seg) out.push(seg);
-  }
+  const re = /([^。！？!?…]*[。！？!?…]+[」”’』）)]*)|([^。！？!?…]+)/g;
+  text.split(/\n+/).forEach((para, pi) => {
+    let head = pi > 0;      // 非首段的第一句带换行前缀，段落信息才能带到渲染层
+    let m;
+    while ((m = re.exec(para))) {
+      const seg = m[0].trim();
+      if (!seg) continue;
+      out.push(head ? `\n${seg}` : seg);
+      head = false;
+    }
+  });
   return out;
 }
 
@@ -1411,7 +1472,22 @@ async function sendChat(text) {
 // 书架
 dom.importBtn.addEventListener('click', () => dom.fileInput.click());
 dom.fileInput.addEventListener('change', () => uploadNovel(dom.fileInput.files[0]));
+dom.exampleLibraryBtn.addEventListener('click', () => {
+  dom.libraryView.querySelector('.brand').hidden = true;
+  dom.libraryView.querySelector('.launcher-nav').hidden = true;
+  dom.libraryView.querySelector('.reader-cache-heading').hidden = true;
+  dom.novelMenuList.hidden = true;
+  dom.exampleLibraryPanel.hidden = false;
+});
+dom.backToReaderCache.addEventListener('click', () => {
+  dom.libraryView.querySelector('.brand').hidden = false;
+  dom.libraryView.querySelector('.launcher-nav').hidden = false;
+  dom.libraryView.querySelector('.reader-cache-heading').hidden = false;
+  dom.novelMenuList.hidden = false;
+  dom.exampleLibraryPanel.hidden = true;
+});
 dom.backToLibrary.addEventListener('click', showLibrary);
+dom.introStart.addEventListener('click', closeIntro);
 
 // 自由输入
 dom.freeForm.addEventListener('submit', (e) => {
@@ -1474,6 +1550,8 @@ dom.menuPanel.addEventListener('click', (e) => {
 });
 
 // 初始化
+// 页面刷新或脚本重新加载时，直接展示合并后的品牌书架页。
+showLibrary();
 loadLibrary();
 resumeImportJob();
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>小说互动游戏引擎</title>
-  <link rel="stylesheet" href="/style.css?v=17">
+  <link rel="stylesheet" href="/style.css?v=40">
 </head>
 <body data-mode="home" data-color-mode="light">
   <!-- 背景层 -->
@@ -17,23 +17,30 @@
   <section class="launcher" id="launcher">
     <div class="launcher-inner">
       <div class="library-view">
-        <!-- 左侧：标题 + 书架 -->
-        <div class="brand">
-          <h1>小说互动游戏引擎</h1>
-          <p>上传小说，进入书中世界。选择你的角色，体验不同的故事走向。</p>
-        </div>
-
-        <input class="file-input" id="fileInput" type="file" accept=".txt,.md">
-        <div class="launcher-actions">
-          <button class="text-btn primary" id="importBtn">上传新小说</button>
-          <div class="mode-switch">
-            <button type="button" data-color-mode-choice="light">浅</button>
-            <button type="button" data-color-mode-choice="dark">深</button>
-          </div>
-        </div>
-
         <!-- 书架视图：只显示书名（右对齐菜单式） -->
         <div id="libraryView">
+          <div class="brand">
+            <div class="brand-mark">STORY · ENGINE</div>
+            <h1>阅界</h1>
+            <p>阅无止境，界由心生</p>
+            <!-- 署名：改这里时要与 graphic/relation.html 的 .signature 一起改 -->
+            <div class="brand-author">作者：<a href="https://github.com/lkatybb" target="_blank" rel="noopener">@lkatybb</a></div>
+          </div>
+          <input class="file-input" id="fileInput" type="file" accept=".txt,.md">
+          <nav class="launcher-nav" aria-label="作品库操作">
+            <button class="nav-link" id="importBtn">上传素材</button>
+            <button class="nav-link" id="exampleLibraryBtn" type="button">示例作品库</button>
+            <div class="mode-switch">
+              <button type="button" data-color-mode-choice="light">浅</button>
+              <button type="button" data-color-mode-choice="dark">深</button>
+            </div>
+          </nav>
+          <div class="example-library" id="exampleLibraryPanel" hidden>
+            <button class="back-link" id="backToReaderCache">← 返回阅界</button>
+            <div class="library-heading">示例作品库</div>
+            <div class="menu-list" id="exampleMenuList"></div>
+          </div>
+          <div class="library-heading reader-cache-heading">读者缓存</div>
           <div class="menu-list" id="novelMenuList"></div>
         </div>
 
@@ -155,6 +162,25 @@
   <!-- ========== Toast 提示 ========== -->
   <div class="toast" id="toast"></div>
 
+  <div class="intro-overlay" id="introOverlay" hidden role="dialog" aria-modal="true" aria-label="故事背景">
+    <div class="intro-content">
+      <div class="intro-kicker">STORY · PROLOGUE</div>
+      <h2 id="introTitle"></h2>
+      <p id="introText"></p>
+      <button class="text-btn primary" id="introStart">开始故事</button>
+    </div>
+  </div>
+
+  <!-- ========== 生成中缓冲页（开场 / 恢复含 LLM 调用，冷启动可达 40s+） ========== -->
+  <div class="loading-overlay" id="loadingOverlay" hidden role="status" aria-live="polite">
+    <div class="loading-content">
+      <div class="loading-kicker">STORY · ENGINE</div>
+      <div class="loading-title" id="loadingTitle">正在生成新故事</div>
+      <div class="loading-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="loading-hint" id="loadingHint"></p>
+    </div>
+  </div>
+
   <!-- ========== 场景切换弹窗 ========== -->
   <div class="scene-overlay" id="sceneOverlay" hidden role="dialog" aria-modal="true" aria-label="场景切换">
     <div class="scene-card">
@@ -174,6 +200,6 @@
     <button class="text-btn primary" id="endingHome">返回书架</button>
   </div>
 
-  <script src="/app.js?v=19"></script>
+  <script src="/app.js?v=30"></script>
 </body>
 </html>
