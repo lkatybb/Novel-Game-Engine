@@ -1,8 +1,29 @@
-# 小说互动游戏引擎
+<div align="center">
 
-> 把一本小说变成可玩的文字冒险游戏。玩家用选项或自由输入推动剧情，AI 在**原著框架内**实时推演。
->
-> 技术亮点在后端：**三层 RAG 记忆** + **LangGraph 多 Agent 编排** —— 解决"AI 玩到后面就忘了前面设定"这个工程痛点。
+# 阅界 · 小说互动游戏引擎
+
+**把一本小说变成可玩的文字冒险游戏**
+
+*AI 在**原著框架内**实时推演 —— 不剧透后文，也不编原著里没有的剧情*
+
+<img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10+-7B3F45?style=flat-square&logo=python&logoColor=FCF8EE&labelColor=2B2823">
+<img alt="FastAPI 异步 + SSE" src="https://img.shields.io/badge/FastAPI-%E5%BC%82%E6%AD%A5%20%2B%20SSE-7B3F45?style=flat-square&logo=fastapi&logoColor=FCF8EE&labelColor=2B2823">
+<img alt="LangGraph 多 Agent 编排" src="https://img.shields.io/badge/LangGraph-%E5%A4%9A%20Agent%20%E7%BC%96%E6%8E%92-7B3F45?style=flat-square&labelColor=2B2823">
+<img alt="ChromaDB 向量检索" src="https://img.shields.io/badge/ChromaDB-%E5%90%91%E9%87%8F%E6%A3%80%E7%B4%A2-7B3F45?style=flat-square&labelColor=2B2823">
+<img alt="Embedding bge 中文向量模型" src="https://img.shields.io/badge/Embedding-bge%20%E4%B8%AD%E6%96%87%E5%90%91%E9%87%8F%E6%A8%A1%E5%9E%8B-7B3F45?style=flat-square&labelColor=2B2823">
+<img alt="前端 原生 JS · 零依赖" src="https://img.shields.io/badge/%E5%89%8D%E7%AB%AF-%E5%8E%9F%E7%94%9F%20JS%20%C2%B7%20%E9%9B%B6%E4%BE%9D%E8%B5%96-7B3F45?style=flat-square&labelColor=2B2823">
+<img alt="许可证 保留所有权利" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-%E4%BF%9D%E7%95%99%E6%89%80%E6%9C%89%E6%9D%83%E5%88%A9-7B3F45?style=flat-square&labelColor=2B2823">
+<br>
+<img alt="Stars" src="https://img.shields.io/github/stars/lkatybb/Novel-Game-Engine?style=flat-square&label=Stars&color=B5893F&labelColor=2B2823">
+<img alt="Forks" src="https://img.shields.io/github/forks/lkatybb/Novel-Game-Engine?style=flat-square&label=Forks&color=B5893F&labelColor=2B2823">
+<img alt="Issues" src="https://img.shields.io/github/issues/lkatybb/Novel-Game-Engine?style=flat-square&label=Issues&color=B5893F&labelColor=2B2823">
+<img alt="最近提交" src="https://img.shields.io/github/last-commit/lkatybb/Novel-Game-Engine?style=flat-square&label=%E6%9C%80%E8%BF%91%E6%8F%90%E4%BA%A4&color=B5893F&labelColor=2B2823">
+
+<img src="docs/images/bookshelf.jpg" alt="阅界书架页：上传素材 / 继续上次游戏 / 示例作品库 / 设置" width="880">
+
+<sub>书架：上传素材 · 继续上次游戏 · 示例作品库 · 设置</sub>
+
+</div>
 
 **English**: An engine that turns a novel into a playable text adventure, powered by a three-layer RAG memory pipeline and a LangGraph multi-agent orchestrator. FastAPI + SSE backend, dependency-free vanilla-JS front end.
 
@@ -10,11 +31,109 @@
 
 ---
 
-## 这是什么
+## 30 秒看懂
 
 上传一本 TXT / MD 小说 → 按段落切片、向量化入库 → 生成开场场景 → 玩家输入动作 → AI 流式推演剧情、给出选项、更新角色状态。
 
 关键区别：不是"让 LLM 随便编故事"，而是让 LLM 在**原著切片** + **已发生的关键事件** + **玩家当前状态**三重约束下推演。
+
+| 你给什么 | 系统做什么 | 你得到什么 |
+|---|---|---|
+| 一本 TXT / MD 小说 | 切片入库（800 字一段、重叠 100 字）+ LLM 抽取人物关系 / NPC 人设 / 关键事件 / 主角属性 | 一个能玩的文字冒险 |
+| 一句话动作，或点一个选项 | 三层记忆检索 + 关键事件两道闸门 + 多 Agent 推演 | 流式剧情、选项、状态变更 |
+| 「和某个角色私下聊两句」 | 只读旁路：只给它「已经发生」的信息 | 不推进剧情的一段对话 |
+
+---
+
+## 它是怎么跑起来的
+
+```mermaid
+flowchart TD
+    A["上传小说 TXT / MD"] --> B["切片入库：800 字一段，重叠 100 字"]
+    B --> C[("ChromaDB<br/>bge-base-zh-v1.5")]
+    B --> D["LLM 抽取：人物 / 人设 / 关键事件 / 主角属性"]
+    C --> E["开局：检索相关原文生成开场场景"]
+    D --> F["关键事件清单：白名单 + order 序号"]
+    E --> G["玩家：点选项 / 自由输入"]
+    F --> H["LangGraph：router → npc（可选）→ dm"]
+    G --> H
+    H --> I["SSE 增量回推：scene / npc / choices / state"]
+    I --> G
+```
+
+一轮完整的「讲故事」回合，时序是这样：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as 玩家（浏览器）
+    participant API as FastAPI
+    participant G as LangGraph
+    participant DM as dm 节点
+    P->>API: POST /api/game/action
+    API->>G: 动作 + GameState
+    G->>DM: 三层记忆 + 下一个关键事件
+    DM-->>API: 逐 token 产出（get_stream_writer）
+    API-->>P: SSE 推送 stage → scene → npc → choices → state → done
+```
+
+---
+
+## 上手长什么样
+
+<p align="center">
+  <img src="docs/images/gameplay.jpg" alt="游戏界面：顶部 HUD、剧情正文、四个选项、自由输入框" width="880">
+  <br>
+  <sub>一轮之后：顶部是位置 · 剧情进度 18/29 · 焦点角色好感与理智度；正文下方 4 个选项，最底下永远留着「或者，输入你想做的事」</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/timeline.png" alt="剧情时间线面板" width="300">
+  <img src="docs/images/chat.png" alt="角色私聊面板" width="290">
+  <br>
+  <sub>左：剧情时间线 —— 只列「已经发生」，灰字标出「下一个」 · 右：角色私聊 —— 面板上写着「角色只知道自己的剧情，不会剧透后文」</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/character-profile.jpg" alt="角色百科面板" width="500">
+  <img src="docs/images/attributes.png" alt="行囊见闻 · 主角属性面板" width="280">
+  <br>
+  <sub>左：角色百科（性格 / 目标 / 说话风格 / 隐秘 + 关联关键事件 + 原著片段，点关系图节点弹出） · 右：行囊见闻 → 状态（这本书的三项是懦弱 / 愧疚 / 勇气）</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/relation-graph.jpg" alt="人物关系力导图" width="560">
+  <br>
+  <sub>人物关系力导图：D3.js 单文件实现，数据来自 <code>GET /api/novel/{novel_id}/graph</code></sub>
+</p>
+
+### 三种输入，三种反应
+
+| 你输入 | Router 判定 | 实际发生 |
+|---|---|---|
+| 「我向旁边的人打听一下路」 | `dialog`，但没指名具体角色 | 条件边直连 `dm`，省掉一次 `npc` 调用 |
+| 输入里出现了**主角的名字** | `dialog`，且指名了对话目标 | **主角例外**：`is_protagonist` 拦掉 `npc` 分支（放行的话 NPC 会反过来替玩家演出自己），交回 `dm` 正常叙述 |
+| 「我要直接去最后那个地方」 | `action`，DM 声明了靠后的事件 | **顺序闸门**拦截跳序（只放行 `order <= 当前最大 order + 1`），剧情照原著节奏推进一格 |
+| 「和某个角色私下聊两句」 | 独立端点 `POST /api/game/chat` | 只读旁路：不写状态、不落盘，私聊前后存档字节不变 |
+
+### 更多界面（点开）
+
+<details>
+<summary>开场首屏 · 角色私聊全屏</summary>
+
+<p align="center">
+  <img src="docs/images/gameplay-opening.jpg" alt="开场首屏：剧情进度 0/29" width="760">
+  <br>
+  <sub>开场：剧情进度 0/29，时间线上还什么都没有</sub>
+</p>
+
+<p align="center">
+  <img src="docs/images/chat-full.jpg" alt="角色私聊面板全屏" width="380">
+  <br>
+  <sub>私聊全屏版：整段对话滚到底，剧情与状态一动不动</sub>
+</p>
+
+</details>
 
 ---
 
@@ -43,6 +162,15 @@
 2. **顺序闸门**：只能触发 `order <= 当前最大 order + 1` 的事件，不允许跳序
 
 取不到事件清单时放行，避免误杀。实现在 [`global_state.py`](novel_game/memory/global_state.py) 的 `_accept_triggered`。
+
+```mermaid
+flowchart TD
+    A["DM 返回 triggered_events"] --> B{"事件名在原著白名单里？"}
+    B -- 否 --> X["丢弃：原著里没有这件事"]
+    B -- 是 --> C{"order 不超过「已发生最大 order + 1」？"}
+    C -- 否 --> Y["拦截：不许跳序，等前置事件先发生"]
+    C -- 是 --> Z["写入 GameState 与剧情时间线"]
+```
 
 **开场对齐（唯一例外）**：开场那一次要把**完整**清单（只有 `order` + 事件名，不含 `trigger_condition`）交给 DM（`agents/dm.py` 的 `build_opening_prompt`），否则它不知道开场落在原著哪一刻，不敢声明任何事件 —— 时间线会永远冻在 `order` 最小的那件事上。DM 声明"开场时点之前已发生"的事件后，被顺序闸门拦掉的前置事件由 `seed_past_events` 按"关键事件线性发生"补记（能声明第 k 件 ⇒ 第 1..k 件必然都发生过）。**该清单只在开场出现一次**，动作轮仍只注入 `[下一个必须发生的关键事件]`。
 
@@ -152,13 +280,13 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
 
 ### 10. 人物分段提取汇总
 
-`pipeline/character_extractor.py` 抽人物关系 / NPC 人设 / 关键事件时**不再只看全书开头 8000 字**——那对百万字长篇只覆盖 0.8%。现在改成按 [`config.py`](novel_game/config.py) 的 `EXTRACT_SEGMENT_CHARS`（20 万字，≈ 一本实体书的体量）把正文切段，每段取块首 `EXTRACT_SAMPLE_CHARS`（8000 字）各抽一次，最后合并：
+`pipeline/character_extractor.py` 抽人物关系 / NPC 人设 / 关键事件时**不再只看全书开头 8000 字**——那对百万字长篇只覆盖 0.8%。现在改成按 [`config.py`](novel_game/config.py) 的 `EXTRACT_SEGMENT_CHARS`（2 万字，≈ 一个短篇的体量）把正文切段，每段取块首 `EXTRACT_SAMPLE_CHARS`（8000 字）各抽一次，最后合并：
 
-- **分段抽样**：每段独立调一次 LLM（3 次：关系图 / 人设 / 关键事件），只在后半段出场的角色与事件不再被漏掉；单段书（≤ 20 万字）走的是同一套代码但只有 1 段，结果与旧口径逐字一致。
+- **分段抽样**：每段独立调一次 LLM（3 次：关系图 / 人设 / 关键事件），只在后半段出场的角色与事件不再被漏掉；短篇（≤ 2 万字）走的是同一套代码但只有 1 段，结果与旧口径逐字一致。
 - **合并口径**：节点与边按名字去重、`weight` 取最大；**只有第 1 段能声明主角**，其余段落一律降级为配角；同一角色多段人设按「最早出现的段胜出」。
 - **事件顺序**：跨段按段序重排成稠密的 `1..N`，时间线不会出现乱序。
 - **规模控制**：全书事件目标量 `EXTRACT_MAX_EVENTS`（30，按段数均分、每段夹到 3~15 条）；合并后节点按 `weight` 降序截断到 `EXTRACT_MAX_NODES`（60），被截节点的边一并丢弃，不留悬空边——[`api/route_graph.py`](novel_game/api/route_graph.py) 是一次性全量返回给 D3 力导图的，不设上限会失控。
-- **代价与边界**：抽样占全文 4%（8000 / 200000），即「每段都抽」而非「每段抽更多」，换来 LLM 调用次数的可预期——`3 × 段数 + 1`（最后一次是全书主角属性，只用第 1 段样本）。
+- **代价与边界**：抽样占每段 40%（8000 / 20000），即「每段都抽」而非「每段抽更多」，换来 LLM 调用次数的可预期——`3 × 段数 + 1`（最后一次是全书主角属性，只用第 1 段样本）。
 
 ---
 
@@ -173,6 +301,7 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
 ├── README.md
 ├── trae/rules/AGENTS.md        # 铁律原文（Trae 版）
 ├── .github/agents/             # 5 个自定义 Agent 定义（规划/评审/实现/需求/故障）
+├── docs/images/                # README 配图（由本地 samples/ 原图裁剪压缩而来）
 └── novel_game/
     ├── config.py               # 配置中心：LLM / ChromaDB / 切片参数 / 共享单例
     ├── models.py               # GameState / PlayerAction / AgentState
@@ -199,13 +328,26 @@ START ──► router ──┬── dialog 且指名「非主角」NPC ──
     │   ├── import_jobs.py      # 上传导入任务：内存任务表 + 后台线程 + 进度映射
     │   ├── route_novel.py      # 上传（异步）/ 导入进度 / 书架
     │   ├── route_game.py       # 开局 / 恢复 / 动作（SSE）
-    │   └── route_graph.py      # 人物关系图数据
+    │   ├── route_graph.py      # 人物关系图数据
+    │   ├── route_settings.py   # 网页内配置 LLM（API Key / 接口地址 / 模型名）
+    │   ├── rate_limit.py       # 按 IP / 全站的额度限流（只挂会调 LLM 的端点）
+    │   └── request_context.py  # 访客标识 X-Client-Id：让公开体验站的存档互相隔开
     ├── static/                 # 前端：书架 + 游戏界面（原生 JS，无框架）
     ├── graphic/relation.html   # D3.js 关系力导图（单文件）
+    ├── deploy/                 # 公开体验站：打包脚本 + systemd 单元 + 环境模板
     └── data/                   # 运行时数据（不入库，见下）
 ```
 
-分层依赖是单向的：`api` → `agents` → `memory` / `pipeline` → `models` / `config`。
+分层依赖是单向的：
+
+```mermaid
+flowchart LR
+    A["api<br/>接口层"] --> B["agents<br/>LangGraph 编排"]
+    B --> C["memory<br/>三层记忆"]
+    B --> D["pipeline<br/>入库与抽取"]
+    C --> E["models / config"]
+    D --> E
+```
 
 ---
 
@@ -230,28 +372,33 @@ pip install -r requirements.txt
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-### 2. 配置 API Key
-
-在 `novel_game/` 下新建 `.env`：
-
-```ini
-LLM_API_KEY=sk-你的DeepSeek密钥
-```
-
-其余配置都有安全默认值，不填也能跑。
-
-### 3. 启动
+### 2. 启动
 
 ```bash
 cd novel_game
 uvicorn api.main:app --reload --port 8000
 ```
 
-浏览器打开 <http://localhost:8000> → 上传小说（或从书架选）→ 开玩。
+浏览器打开 <http://localhost:8000> → 点书架上的「**设置**」填 API Key → 上传小说（或从书架选）→ 开玩。
+
+不用手动创建 `.env`：在设置面板里填的 Key 会由后端自动写进 `novel_game/.env`，读完重启依然生效；点「测试连接」可以当场确认 Key 是否可用。设置面板支持**任意 OpenAI 兼容服务**（DeepSeek / Kimi / 通义等），填对接口地址与模型名即可，保存后立即生效、无需重启。
 
 想先快速验证链路，仓库自带一本测试小说 [`novel_game/data/novels/西游记-样本.txt`](novel_game/data/novels/西游记-样本.txt)，上传它即可。
 
-### 4. 命令行模式
+<details>
+<summary>也可以手写 .env（CI / 无浏览器环境）</summary>
+
+在 `novel_game/` 下新建 `.env`：
+
+```ini
+LLM_API_KEY=sk-你的密钥
+```
+
+其余配置都有安全默认值，不填也能跑。
+
+</details>
+
+### 3. 命令行模式
 
 ```bash
 cd novel_game
@@ -260,12 +407,55 @@ python play.py
 
 CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 
+### 4. 部署成公开体验站（可选）
+
+想让别人直接点开就能玩，多出来的问题是：**别人的额度、别人的存档、别人的书架都得隔开**。[`novel_game/deploy/`](novel_game/deploy) 就是干这个的，三步：
+
+```bash
+# 1) 本机打包（Windows 上跑一次）
+cd novel_game
+python deploy/pack_demo.py            # → deploy/dist/novel_game_demo.tar.gz
+
+# 2) 服务器：解包到 /opt（得到 /opt/novel_game），装依赖，写配置
+cp deploy/demo.env.example .env       # 只改 LLM_API_KEY 一行
+
+# 3) 起服务
+sudo cp deploy/novel-game.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now novel-game
+```
+
+打包脚本只搬体验站真正要用的东西：代码 + 预置作品的正文与人物缓存 + **只含预置作品的干净向量库**。本机存档和非预置作品一律不进包，打完还会自检一遍——避免手滑把不该上公网的东西带出去。
+
+体验站模式靠 `PUBLIC_DEMO=1` 打开（`.env` 和 systemd 单元里各写一份，后者是防止 `.env` 被改坏）：
+
+| 开关 | 作用 |
+|---|---|
+| `PUBLIC_DEMO=1` | 关闭上传、删书、改配置（连「测试连接」也关），书架只认预置作品，其余书视同不存在 |
+| `RATE_LIMIT_PER_IP_HOURLY=15` | 单 IP 每小时最多 15 次 LLM 调用（逛书架、看存档不计数） |
+| `RATE_LIMIT_GLOBAL_DAILY=1000` | 全站每天 1000 次，约 ¥5/天封顶；计数在内存里，重启即清零 |
+| `LLM_MAX_TOKENS=800` | 压小单次回复长度，同样是护额度 |
+| `X-Client-Id` | 访客标识，各人存档互相看不见，不引入账号系统 |
+
+两个容易踩的点：服务单元固定 `--workers 1`（存档、人物缓存、LLM client 单例都在进程内存里，多 worker 会各看各的）；`User=` 要和「预热 Embedding 模型」用同一个用户，否则模型缓存不在同一个 `HOME` 下，服务启动后会重新下载 400 MB。
+
+<details>
+<summary>为什么体验站不直接用「本地跑法」上公网？</summary>
+
+本地那套默认 `PUBLIC_DEMO=0`，谁都能上传、删书、在设置面板里改 Key；`/api/novel/upload` 还是后台线程 + 全量向量入库，公网直接暴露等于把别人的账单和磁盘一起送出去。体验站的三个开关（白名单书架、两道额度闸门、单进程）就是为了把「点开就玩」和「别把我玩破产」同时做到。
+
+`deploy/dist/` 里的 `tar.gz` 是打包产物，不入库。
+
+</details>
+
 ---
 
 ## API
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| `GET` | `/api/settings` | 读取当前 LLM 配置：`{configured, key_masked, base_url, model}`。**只回 Key 掩码，明文永不下发** |
+| `POST` | `/api/settings` | 保存配置：`{api_key, base_url, model}`（`api_key` 留空表示沿用现有 Key）。写入 `novel_game/.env` 并即时生效，无需重启 |
+| `POST` | `/api/settings/test` | 用传入配置发一次最小请求（`max_tokens=1`），返回 `{ok, message}`；不落盘、不影响当前运行配置 |
 | `POST` | `/api/novel/upload` | 上传小说（`multipart/form-data`，≤ 10 MB，仅 `.txt` / `.md`）。**校验同步做**（失败仍是 `{"error": ...}`），通过后立刻返回 `{"job_id": "job_xxx", "status": "running"}`，切片入库与人物提取在后台线程进行。同一时刻只允许 1 个导入任务，重复上传返回 **409** + `{"error": ...}` |
 | `GET` | `/api/novel/import/{job_id}` | 查询导入进度：`{status, stage, progress, novel_id, chunk_count, title, error}`。`stage` 为「排队中 / 向量入库 / 人物提取 / 完成」，`progress` 0~100 单调递增；未知 `job_id` → **404**（任务只在内存保留，服务重启后必然 404，前端据此提示重新上传） |
 | `GET` | `/api/novel/list` | 书架列表（导入期间照常可用） |
@@ -287,18 +477,22 @@ CLI 走的是同一张 LangGraph 图，行为和网页端一致。
 
 ## 配置项
 
-全部通过环境变量 / `.env` 覆盖，定义在 [`config.py`](novel_game/config.py)：
+全部通过环境变量 / `.env` 覆盖，定义在 [`config.py`](novel_game/config.py)。
+其中前四项可以在网页的「设置」面板里改（保存即生效并落盘到 `.env`，不用重启）：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `LLM_API_KEY` | *(空)* | DeepSeek API Key，**必填** |
+| `LLM_API_KEY` | *(空)* | LLM API Key，**必填**（网页设置面板或 `.env` 均可） |
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI 兼容端点 |
 | `LLM_MODEL` | `deepseek-chat` | 模型名 |
-| `LLM_MAX_TOKENS` | `16384` | 单次生成上限 |
+| `LLM_MAX_TOKENS` | `16384` | 单次生成上限（仅 `.env`，改了要重启） |
 | `EMBEDDING_MODEL` | `BAAI/bge-base-zh-v1.5` | 中文向量模型 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | HuggingFace 镜像（`setdefault`，可覆盖） |
+| `PUBLIC_DEMO` | `0` | 设为 `1` 进入公开体验站模式：关上传 / 删书 / 改配置，书架只认 `featured` 作品 |
+| `RATE_LIMIT_PER_IP_HOURLY` | `15` | 单 IP 每小时 LLM 调用上限（只挂会调 LLM 的端点，逛书架不计数） |
+| `RATE_LIMIT_GLOBAL_DAILY` | `1000` | 全站每日 LLM 调用上限，约 ¥5/天封顶 |
 
-代码内常量：`RETRIEVAL_TOP_K=5`、`SHORT_TERM_LIMIT=5`、`CHUNK_SIZE=800`、`CHUNK_OVERLAP=100`、`EXTRACT_SEGMENT_CHARS=200000`（人物提取分段粒度）、`EXTRACT_SAMPLE_CHARS=8000`（每段采样字数，等于旧 `max_chars`）、`EXTRACT_MAX_EVENTS=30`（全书关键事件目标总量）、`EXTRACT_MAX_NODES=60`（合并后关系图节点上限）。
+代码内常量：`RETRIEVAL_TOP_K=5`、`SHORT_TERM_LIMIT=5`、`CHUNK_SIZE=800`、`CHUNK_OVERLAP=100`、`EXTRACT_SEGMENT_CHARS=20000`（人物提取分段粒度，即 2 万字）、`EXTRACT_SAMPLE_CHARS=8000`（每段采样字数，等于旧 `max_chars`）、`EXTRACT_MAX_EVENTS=30`（全书关键事件目标总量）、`EXTRACT_MAX_NODES=60`（合并后关系图节点上限）。
 
 LLM 客户端是**进程级单例**，带 `timeout=60s` 和 `max_retries=2`（SDK 内置对 429 / 5xx 指数退避），避免 API 挂起导致请求永久阻塞。
 
@@ -345,6 +539,8 @@ python _diag_sse.py
 
 ## 当前状态
 
+🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩🟨⬜ **13 / 15 项完成**
+
 | 编号 | 功能 | 状态 |
 |---|---|---|
 | F1 | 小说解析入库 | ✅ 完成 |
@@ -361,7 +557,7 @@ python _diag_sse.py
 | F12 | 角色百科面板 | ✅ 完成（关系图点击节点展开：性格 / 目标 / 说话风格 / 隐秘 + 关键事件 + 原著片段，`GET /api/novel/{id}/character/{name}`） |
 | F13 | 好感度 / 理智度 / 主角属性 | ✅ 完成（`affinity` 每角色对玩家 + `hp` 主角理智度 + `stats` 每本书 3 项由提取器按题材定：DM 按人物特质裁决每回合 ±10 以内的增减，顶栏 HUD 显示焦点角色好感与理智，属性在「行囊见闻 → 状态」段展示，`[全局状态]` 以三行新口径注入 DM / NPC） |
 | F14 | 纸感与仿真油墨 | ✅ 完成（CSS 令牌 `--paper` / `--paper-fiber` / `--ink-bleed` / `--letterpress` / `--card-veil`：纸纤维、纸页明暗与投影、洇墨与压印；浅/暗各一套，零新增依赖） |
-| F15 | 大文件导入体验 | ✅ 完成（人物提取改为「20 万字分段 + 每段块首 8000 字抽样 + 合并去重」，长篇不再只吃开头；`POST /api/novel/upload` 改后台线程导入、立即返回 `job_id`，进度走 `GET /api/novel/import/{job_id}`，前端常驻 toast 显示「向量入库 n% / 人物提取 n%」并在刷新后接着显示；同一时刻只允许 1 个导入任务，重复上传 409） |
+| F15 | 大文件导入体验 | ✅ 完成（人物提取改为「2 万字分段 + 每段块首 8000 字抽样 + 合并去重」，长篇不再只吃开头；`POST /api/novel/upload` 改后台线程导入、立即返回 `job_id`，进度走 `GET /api/novel/import/{job_id}`，前端常驻 toast 显示「向量入库 n% / 人物提取 n%」并在刷新后接着显示；同一时刻只允许 1 个导入任务，重复上传 409） |
 
 ### 明确不做
 
@@ -369,6 +565,73 @@ python _diag_sse.py
 - MySQL 持久化（所有状态在内存 + ChromaDB + JSON 快照）
 - React 前端（单页原生 JS 足够）
 - 百万字长篇支持（先跑通 3000 字级短篇）
+
+---
+
+## 一些「较真到没必要，但很爽」的细节
+
+| 细节 | 为什么这么写 |
+|---|---|
+| 短期记忆是 `deque(maxlen=SHORT_TERM_LIMIT)` | 装满了自动淘汰最旧的一条，不用手写「删第一条再 append」 |
+| 排序不做日期解析 | `uploaded_at` / `updated_at` 都存 ISO 8601 字符串，直接比字典序，省掉一个日期库和整类时区坑 |
+| 存档与 `.env` 都是「先写 `.tmp`，再 `os.replace`」 | 中途失败只会留下一个临时文件，永远不会把原档写坏 |
+| 私聊前后存档**字节不变** | 旁路就是旁路；测试里真的拿文件字节比对，不只看状态字段 |
+| `choices` 为空就如实下发空数组 | 不硬凑两个兜底选项——编出来的选项会把剧情带偏 |
+| `trigger_condition` 一个字节都不下发 | 那是「何时该发生」，等于把后文剧透给角色 |
+| SSE 强制「场景弹窗 → NPC 台词 → 正文」的到达顺序 | 前端可以边收边渲染，不必自己排队等某个字段先到 |
+| 人物提取每段只读块首 8000 字 | 每段 40%，换来 LLM 调用次数可预期：`3 × 段数 + 1`，长篇不至于跑到失控 |
+| 关系图按 `weight` 截断到 60 个节点，被截节点的边一起丢 | 不留悬空边，D3 那边省掉一整套空值防御 |
+| 下雨用 `90deg` 竖直条纹 + `skewX` 斜切，纯 CSS 合成层 | 不碰 canvas、不占主线程，动画再密也不掉帧 |
+
+---
+
+## 常见问题
+
+<details>
+<summary>为什么没有一个独立的「Rules / 规则节点」？</summary>
+
+两条硬规则（事件白名单、顺序闸门）都是 [`global_state.py`](novel_game/memory/global_state.py) 里的**纯 Python 函数**，在「写回状态」这一个入口统一执行。它不需要 LLM，也不需要一次额外的图节点往返——放进图里只会多一次状态搬运，让「谁来判定」变得模糊。
+
+</details>
+
+<details>
+<summary>玩家硬要跳序怎么办？</summary>
+
+`order` 超过「已发生最大 order + 1」的事件会被闸门拦下，**编造 / 跳序的事件名不会入库**。DM 照样把这一轮讲完，但剧情时间线上不会凭空多出那一格。
+
+</details>
+
+<details>
+<summary>AI 会不会剧透？</summary>
+
+三条口径一起管：
+
+- 角色私聊：未触发事件清单、`trigger_condition`、以及「下一个必须发生的关键事件」**全部不注入**（[`agents/npc.py`](novel_game/agents/npc.py)）。
+- DM：只给「下一个」未触发事件的名字，且从来不给 `trigger_condition`（[`agents/dm.py`](novel_game/agents/dm.py)）。
+- 下发接口：`/api/game/action` 的整条 SSE 报文里，`trigger_condition` 出现 **0 次**（[`api/route_game.py`](novel_game/api/route_game.py)）。这一点有契约测试守着：`python test_contract.py` 里 A3 就是数它出现几次。
+
+</details>
+
+<details>
+<summary>为什么不能跟主角私聊？</summary>
+
+主角由玩家自己扮演，是「你」；让它开口说话等于 AI 替你演自己。所以 Router 里有一条**主角例外**：指名对话目标如果是主角，直接拦掉 `npc` 分支，交回 `dm` 正常叙述。
+
+</details>
+
+<details>
+<summary>为什么不用 React + MySQL + 账号系统？</summary>
+
+这是「明确不做」清单上的前三项。单页原生 JS 已经够用（换来零构建、零 `node_modules`）；状态在内存 + ChromaDB + JSON 快照里，重启不丢但也不需要一张 DDL 表；公开体验站用 `X-Client-Id` 隔离存档，不引入账号体系。
+
+</details>
+
+<details>
+<summary>能玩多大的小说？</summary>
+
+切片入库（800 字一段）和人物提取（2 万字一段）都是分段流式处理的，所以中长篇不会只吃开头。但**百万字长篇不是目标**，见「明确不做」——目前验证过的是短篇级文本。
+
+</details>
 
 ---
 
@@ -398,6 +661,27 @@ data/bookshelf.json        # 书架索引
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 技术选型、模块划分、核心数据结构
 - [`novel_game/DEV_GUIDE.md`](novel_game/DEV_GUIDE.md) — 分阶段开发执行手册（含每步验收命令）
 - [`AGENTS.md`](AGENTS.md) — 项目开发铁律
+
+---
+
+## 仓库数据
+
+<p align="center">
+  <img src="https://gh-readme-stats.vercel.app/api?username=lkatybb&repo=Novel-Game-Engine&title_color=7B3F45&text_color=2B2823&icon_color=B5893F&border_color=C9BFA8&locale=cn&cache_seconds=86400" height="150" alt="GitHub 统计">
+  <img src="https://gh-readme-stats.vercel.app/api/top-langs?username=lkatybb&repo=Novel-Game-Engine&layout=compact&langs_count=6&title_color=7B3F45&text_color=2B2823&icon_color=B5893F&border_color=C9BFA8&locale=cn&cache_seconds=86400" height="150" alt="语言构成">
+  <img src="https://gh-readme-stats.vercel.app/api/pin?username=lkatybb&repo=Novel-Game-Engine&title_color=7B3F45&text_color=2B2823&icon_color=B5893F&border_color=C9BFA8&locale=cn&cache_seconds=86400" height="150" alt="仓库卡片">
+</p>
+
+<details>
+<summary>这些卡片是怎么来的？（配色 / 端点 / 自建实例）</summary>
+
+- 用的就是本仓库里那份 [`github-readme-stats-master/`](github-readme-stats-master) 开源项目的三个端点：`/api`（统计）、`/api/top-langs`（语言）、`/api/pin`（仓库卡片）。
+- 配色不是随手挑的：`title_color=7B3F45`、`text_color=2B2823`、`icon_color=B5893F`、`border_color=C9BFA8` 全部取自 [`novel_game/static/style.css`](novel_game/static/style.css) 的纸感令牌，所以卡片跟界面是同一种纸。
+- `locale=cn` 让标签变中文（「获标星数」「累计提交总数」「最常用的语言」），`cache_seconds=86400` 让缓存待一天，少打几次上游。
+- **官方实例 `github-readme-stats.vercel.app` 目前对本仓库所有端点返回 503**，所以这里指向的是社区镜像 `gh-readme-stats.vercel.app`。想换成自建实例：按 [`github-readme-stats-master/readme.md`](github-readme-stats-master/readme.md) 部署到自己的 Vercel，然后把上面三个 URL 的域名替换掉即可，其余参数原样保留。
+- 顶部技术栈徽章不依赖任何外部统计服务，它们是 shields.io 静态徽章，纯文本拼出来的。
+
+</details>
 
 ---
 

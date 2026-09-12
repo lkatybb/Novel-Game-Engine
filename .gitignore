@@ -9,9 +9,13 @@
 /story_read/
 /graphic/
 /story_to_game/
+/github-readme-stats-master/
 /story_read/*.zip
 /graphic/*.zip
 /story_to_game/*.zip
+
+# ---------- 素材原图（README 用的是 docs/images/ 下裁剪压缩后的版本）----------
+/samples/
 
 # ---------- Python 环境与缓存 ----------
 /.venv/
