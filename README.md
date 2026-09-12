@@ -44,6 +44,7 @@
 | 「和某个角色私下聊两句」 | 只读旁路：只给它「已经发生」的信息 | 不推进剧情的一段对话 |
 
 ---
+## 在线试玩：http://134.175.149.21:8000/
 
 ## 它是怎么跑起来的
 
@@ -671,17 +672,6 @@ data/bookshelf.json        # 书架索引
   <img src="https://gh-readme-stats.vercel.app/api/top-langs?username=lkatybb&repo=Novel-Game-Engine&layout=compact&langs_count=6&title_color=7B3F45&text_color=2B2823&icon_color=B5893F&border_color=C9BFA8&locale=cn&cache_seconds=86400" height="150" alt="语言构成">
   <img src="https://gh-readme-stats.vercel.app/api/pin?username=lkatybb&repo=Novel-Game-Engine&title_color=7B3F45&text_color=2B2823&icon_color=B5893F&border_color=C9BFA8&locale=cn&cache_seconds=86400" height="150" alt="仓库卡片">
 </p>
-
-<details>
-<summary>这些卡片是怎么来的？（配色 / 端点 / 自建实例）</summary>
-
-- 用的就是本仓库里那份 [`github-readme-stats-master/`](github-readme-stats-master) 开源项目的三个端点：`/api`（统计）、`/api/top-langs`（语言）、`/api/pin`（仓库卡片）。
-- 配色不是随手挑的：`title_color=7B3F45`、`text_color=2B2823`、`icon_color=B5893F`、`border_color=C9BFA8` 全部取自 [`novel_game/static/style.css`](novel_game/static/style.css) 的纸感令牌，所以卡片跟界面是同一种纸。
-- `locale=cn` 让标签变中文（「获标星数」「累计提交总数」「最常用的语言」），`cache_seconds=86400` 让缓存待一天，少打几次上游。
-- **官方实例 `github-readme-stats.vercel.app` 目前对本仓库所有端点返回 503**，所以这里指向的是社区镜像 `gh-readme-stats.vercel.app`。想换成自建实例：按 [`github-readme-stats-master/readme.md`](github-readme-stats-master/readme.md) 部署到自己的 Vercel，然后把上面三个 URL 的域名替换掉即可，其余参数原样保留。
-- 顶部技术栈徽章不依赖任何外部统计服务，它们是 shields.io 静态徽章，纯文本拼出来的。
-
-</details>
 
 ---
 
