@@ -34,14 +34,16 @@
            init_state 按提取器给出的 init 起算
     A13   离线四向断言：开场时间线对齐 —— 声明 order 3 补记 1/2/3；非白名单名不补记；
            已补记不重复不越界；开场 prompt 给全清单但零 trigger_condition 泄漏
-    A14   离线五向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
+    A14   离线七向断言：玩家身份口径 —— 主角由 group=="主角" 解析；正文简称也算主角；
            条件边拦掉主角不绕 NPC 节点（真配角照旧绕）；私聊入口对主角直接拒绝
-           且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名
-    A16   离线七向断言：人物分段提取 —— 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）；
+           且不发起 LLM 调用；台词/私聊 prompt 均注入 [玩家身份] 与本作主角名；
+           开场与动作轮 prompt 都注入同一句 [人称约束]；人称约束随原著人称切换文案
+    A16   离线八向断言：人物分段提取 —— 抽样覆盖到第 2 段（超过分段粒度的书不再只吃开头）；
            节点去重取最大 weight、边去重先出现者胜、主角唯一；人设取最早段；
            事件 order 跨段按段序稠密 1..N；单段书与旧口径一致（样本 8000 字、
            事件上限 15、主角属性只调 1 次）；节点数超上限按 weight 截断且不留悬空边；
-           合并结果 5 个顶层 key（含 ending）与元素字段逐字未变
+           合并结果 5 个顶层 key（含 ending）与元素字段逐字未变；各段称呼不统一时
+           按「别名→正名」归并（链式收敛、幻觉名与成环映射丢弃），节点/边/人设同口径
     A17   离线四向断言：原著结局只在终局下发（走到一半 / 无事件书 / 老书无摘要一律 None，
            全部触发才下发）——结局是全书最大的剧透，防"每轮对话都在剧透"
     PRE-1  测试样本文件存在
@@ -672,11 +674,17 @@ def check_player_identity():
             （未触发事件名的零泄漏口径由 A11-4 守着，不在此重复）
       A14-6 DM 的开场 prompt 与动作轮 prompt 同样注入（原著开头是第三人称叙述，
             不注入 DM 会把主角写成旁边看戏的旁人——真机开场实测）
+      A14-7 [人称约束] 每轮都注入：开场与动作轮 prompt 里是同一句（只给开场那次，
+            第 2 回合起 LLM 会漂成第二人称或第三人称旁白）
+      A14-8 人称约束随原著人称走：第一人称原著禁止「你」与第三人称旁白，
+            第三人称原著用「你」称呼玩家
     """
     import agents.dm as dm
     import agents.graph as graph
     import agents.npc as npc
     import pipeline.character_extractor as ce
+    import pipeline.novel_parser as novel_parser
+    import pipeline.prompts as prompts
     import memory.short_term as short_term
     from memory import global_state
 
@@ -688,6 +696,8 @@ def check_player_identity():
         {"id": "通背猿猴", "group": "配角", "weight": 30},
     ]}}
     global_state.init_state(sid, probe)   # prompt 组装会读状态，先备一个干净会话
+    # 固定原著人称判定，避免依赖 ChromaDB 里是否真有这本书（离线也能跑）
+    novel_parser._pov_cache[probe] = "third"
     original_profile = npc.get_npc_profile
     original_client = npc.get_llm_client
     try:
@@ -740,9 +750,27 @@ def check_player_identity():
         dm_injected = all("[玩家身份]" in t and "孙悟空" in t
                           for t in (opening_prompt, action_prompt))
         check("A14-6", dm_injected, "开场 prompt / 动作轮 prompt 均注入 [玩家身份] 与本作主角名")
+
+        # 人称约束必须每轮都注入：只在开场给一次，第 2 回合起会被 System 里的示例带偏
+        pov_line = prompts.perspective_line(probe)
+        check("A14-7", pov_line in opening_prompt and pov_line in action_prompt,
+              "开场 / 动作轮 prompt 均注入同一句 [人称约束]")
+
+        # 人称约束随原著人称走：第一人称原著里「你」与第三人称旁白都是错的
+        novel_parser._pov_cache[probe] = "first"
+        first_line = prompts.perspective_line(probe)
+        novel_parser._pov_cache[probe] = "third"
+        third_line = prompts.perspective_line(probe)
+        check("A14-8",
+              "「我」" in first_line and "「你」" in first_line and "第三人称" in first_line
+              and "「你」" in third_line and "第三人称" in third_line
+              and first_line != third_line and third_line == pov_line,
+              f"人称约束随原著切换 = {first_line != third_line}，"
+              f"第三人称方与注入方一致 = {third_line == pov_line}")
     finally:
         npc.get_npc_profile = original_profile
         ce._cache.pop(probe, None)
+        novel_parser._pov_cache.pop(probe, None)
         global_state.drop_state(sid)
         short_term.drop(sid)
 
@@ -760,6 +788,8 @@ def check_character_segments():
             结局摘要全书只调 1 次（不随段数增长）
       A16-6 节点数超上限时按 weight 截断，且不留悬空边
       A16-7 合并结果 5 个顶层 key（含 ending）与元素字段与旧结构逐字一致
+      A16-8 同一人的不同称呼（别名/小名）归并到正名：节点、边、人设同口径，
+            链式映射收敛到不动点，名单外的幻觉名与成环条目丢弃
     """
     import pipeline.character_extractor as ce
 
@@ -768,7 +798,9 @@ def check_character_segments():
     calls: list[dict] = []
 
     def _fake_llm(system_prompt: str, sample: str) -> str:
-        if "提取所有出现的人物" in system_prompt:
+        if "人物对齐" in system_prompt:
+            step = "alias"
+        elif "提取所有出现的人物" in system_prompt:
             step = "graph"
         elif "为这些角色生成人设档案" in system_prompt:
             step = "profiles"
@@ -776,6 +808,8 @@ def check_character_segments():
             step = "events"
         elif "客观概述这本书的结局" in system_prompt:
             step = "ending"
+        elif "客观概述这本书的故事背景" in system_prompt:
+            step = "intro"
         else:
             step = "stats"
         calls.append({"step": step, "sample": sample, "prompt": system_prompt})
@@ -791,15 +825,18 @@ def check_character_segments():
                      "relation": "师徒", "type": "师徒"},
                     {"source": "唐僧", "target": "孙悟空", "relation": "师徒", "type": "师徒"},
                 ]})
-            # 第 2 段：重复节点（weight 更小）、重复边（关系不同）、把主角重新标成主角
+            # 第 2 段：同一人换了称呼（行者=大圣=孙悟空、祖师=菩提祖师），
+            # 另有重量更小的重复节点、关系不同的重复边、被重新标成主角的角色
             return json.dumps({"nodes": [
-                {"id": "孙悟空", "weight": 88, "group": "主角"},
+                {"id": "行者", "weight": 88, "group": "主角"},
                 {"id": "白骨精", "weight": 70, "group": "主角"},
                 {"id": "菩提祖师", "weight": 40, "group": "配角"},
+                {"id": "大圣", "weight": 50, "group": "配角"},
+                {"id": "祖师", "weight": 30, "group": "配角"},
             ], "links": [
-                {"source": "孙悟空", "target": "菩提祖师",
+                {"source": "行者", "target": "菩提祖师",
                  "relation": "反目", "type": "敌对"},
-                {"source": "白骨精", "target": "孙悟空", "relation": "敌对", "type": "敌对"},
+                {"source": "白骨精", "target": "行者", "relation": "敌对", "type": "敌对"},
             ]})
         if step == "profiles":
             if sample.startswith("开头"):
@@ -808,7 +845,9 @@ def check_character_segments():
             return json.dumps({"唐僧": {"personality": "次段人设", "secret": "次段秘密",
                                         "speech_style": "粗犷", "goal": "成佛"},
                                "白骨精": {"personality": "次段人设", "secret": "无",
-                                          "speech_style": "阴柔", "goal": "长生"}})
+                                          "speech_style": "阴柔", "goal": "长生"},
+                               "祖师": {"personality": "次段人设", "secret": "无",
+                                        "speech_style": "简慢", "goal": "传道"}})
         if step == "events":
             if sample.startswith("开头"):
                 # 故意倒序声明：段内必须先理序再编号
@@ -822,8 +861,15 @@ def check_character_segments():
                 {"event_name": "三打白骨精", "trigger_condition": "白骨精三次变化",
                  "order": 1, "key_characters": ["孙悟空", "白骨精"]},
             ]})
+        if step == "alias":
+            # 前三条有效（含链式：行者→大圣→孙悟空）；后两条是名单外的幻觉正名，应丢弃
+            return json.dumps({"aliases": {"行者": "大圣", "大圣": "孙悟空",
+                                           "祖师": "菩提祖师",
+                                           "唐僧": "唐三藏", "齐天大圣": "孙悟空"}})
         if step == "ending":
             return json.dumps({"ending": "假结局：师徒四人取得真经，各归其位。"})
+        if step == "intro":
+            return json.dumps({"intro": "假简介：唐朝僧人西行取经的故事背景。"})
         return json.dumps({"stats": [{"name": "神通", "desc": "法术本领", "init": 60}]})
 
     # 恰好 2 段：段 1 的样本是"开头…"，段 2 的样本是"尾部…"（长度跟随分段粒度，不写死）
@@ -840,6 +886,8 @@ def check_character_segments():
         ce.drop_cache(single_probe)
 
         result = ce.extract_characters(probe, long_text)
+        # A16-5 会清空 calls，别名归并的调用记录必须先捕获
+        alias_calls = [c for c in calls if c["step"] == "alias"]
 
         # ---- A16-1：每段都有自己的样本，第 2 次抽样来自第 2 段开头；结局样本取书尾 ----
         samples = [c["sample"] for c in calls if c["step"] == "graph"]
@@ -880,6 +928,19 @@ def check_character_segments():
               f"唐僧人设 = {profiles.get('唐僧', {}).get('personality')!r}（最早段胜出）；"
               f"仅次段出场的角色仍入库 = {'白骨精' in profiles}")
 
+        # ---- A16-8：同一人的不同称呼归并到正名（分段提取的副作用） ----
+        reported = alias_calls[0]["sample"] if alias_calls else ""
+        expect_list = "、".join(["孙悟空", "唐僧", "菩提祖师", "行者", "白骨精", "大圣", "祖师"])
+        check("A16-8",
+              len(alias_calls) == 1 and reported == f"人物名清单：{expect_list}"
+              and set(nodes) == {"孙悟空", "唐僧", "菩提祖师", "白骨精"}
+              and "祖师" not in profiles
+              and profiles.get("菩提祖师", {}).get("personality") == "次段人设",
+              f"别名归并调用 {len(alias_calls)} 次（清单 = 各段节点名按出现顺序去重）；"
+              f"合并后节点 = {sorted(nodes)}（次段「行者→大圣→孙悟空」链式收敛、"
+              f"「祖师」并入正名）；人设 key 同口径 = {sorted(profiles)}；"
+              f"「唐僧→唐三藏」「齐天大圣」是名单外的幻觉名，已丢弃")
+
         # ---- A16-4：跨段 order 按段序稠密 ----
         events = [(e["event_name"], e["order"]) for e in result["key_events"]]
         check("A16-4", events == [("出山", 1), ("拜师菩提", 2), ("三打白骨精", 3)],
@@ -889,18 +950,19 @@ def check_character_segments():
         calls.clear()
         ce.extract_characters(single_probe, single_text)
         single = {step: [c for c in calls if c["step"] == step]
-                  for step in ("graph", "events", "stats", "ending")}
+                  for step in ("graph", "events", "stats", "ending", "intro")}
         sample_ok = (len(single["graph"]) == 1
                      and single["graph"][0]["sample"] == single_text[:ce.EXTRACT_SAMPLE_CHARS])
         quota_ok = (len(single["events"]) == 1
                     and "提取 5-15 个关键事件" in single["events"][0]["prompt"])
         check("A16-5",
               sample_ok and quota_ok and len(single["stats"]) == 1
-              and len(single["ending"]) == 1,
+              and len(single["ending"]) == 1 and len(single["intro"]) == 1,
               f"单段书：抽样 {len(single['graph'])} 次"
               f"（样本 {len(single['graph'][0]['sample']) if single['graph'] else 0} 字）、"
               f"事件上限沿用旧口径 = {quota_ok}、主角属性调用 {len(single['stats'])} 次、"
-              f"结局摘要调用 {len(single['ending'])} 次（全书一次，不随段数增长）")
+              f"结局摘要调用 {len(single['ending'])} 次（全书一次，不随段数增长）、"
+              f"背景简介调用 {len(single['intro'])} 次（同样全书一次）")
 
         # ---- A16-6：节点超上限按 weight 截断，且不留悬空边 ----
         heavy = {
@@ -927,7 +989,8 @@ def check_character_segments():
         cache_file = ce._cache_path(probe)
         cached = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
         check("A16-7",
-              set(result) == {"graph", "npc_profiles", "key_events", "player_stats", "ending"}
+              set(result) == {"graph", "npc_profiles", "key_events", "player_stats",
+                              "ending", "intro"}
               and set(result["graph"]) == {"nodes", "links"}
               and all(set(n) == {"id", "weight", "group"} for n in result["graph"]["nodes"])
               and all(set(l) == {"source", "target", "relation", "type"}
@@ -940,8 +1003,10 @@ def check_character_segments():
               and ce.get_key_events(probe) == result["key_events"]
               and ce.get_player_stats(probe) == result["player_stats"]
               and ce.get_ending(probe) == result["ending"]
+              and ce.get_intro(probe) == result["intro"]
               and ce.get_npc_profile(probe, "唐僧") == profiles["唐僧"],
-              "5 个顶层 key（含 ending）与元素字段逐字未变；磁盘缓存与 getter 读到的结构一致")
+              "6 个顶层 key（含 ending / intro）与元素字段逐字未变；"
+              "磁盘缓存与 getter 读到的结构一致")
     finally:
         ce._llm_call = original_llm_call
         ce.drop_cache(probe)
