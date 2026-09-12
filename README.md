@@ -6,6 +6,8 @@
 
 **English**: An engine that turns a novel into a playable text adventure, powered by a three-layer RAG memory pipeline and a LangGraph multi-agent orchestrator. FastAPI + SSE backend, dependency-free vanilla-JS front end.
 
+**作者**：[@lkatybb](https://github.com/lkatybb)
+
 ---
 
 ## 这是什么
@@ -396,3 +398,13 @@ data/bookshelf.json        # 书架索引
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 技术选型、模块划分、核心数据结构
 - [`novel_game/DEV_GUIDE.md`](novel_game/DEV_GUIDE.md) — 分阶段开发执行手册（含每步验收命令）
 - [`AGENTS.md`](AGENTS.md) — 项目开发铁律
+
+---
+
+## 作者与版权
+
+作者：[@lkatybb](https://github.com/lkatybb)
+
+本仓库**未附开源许可证**，默认保留所有权利（All rights reserved）。欢迎阅读源码、克隆运行、交流讨论；如需商用或二次分发，请先联系作者。
+
+`novel_game/data/novels/` 下的小说正文与封面版权归各自原作者所有，本项目不对这些内容主张任何权利。

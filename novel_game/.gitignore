@@ -14,3 +14,6 @@ data/bookshelf.json
 # config.py 会在导入时自动重建这些目录，空仓库克隆后可直接启动
 data/novels/*
 !data/novels/西游记-样本.txt
+
+# 散落在项目根的小说原文（第三方版权，勿入库）；requirements.txt 已入库，不受影响
+/*.txt
