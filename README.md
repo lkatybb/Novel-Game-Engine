@@ -4,6 +4,8 @@
 
 **把一本小说变成可玩的文字冒险游戏**
 
+*** 作者：陈效彤 ***
+
 *AI 在**原著框架内**实时推演 —— 不剧透后文，也不编原著里没有的剧情*
 
 <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10+-7B3F45?style=flat-square&logo=python&logoColor=FCF8EE&labelColor=2B2823">
